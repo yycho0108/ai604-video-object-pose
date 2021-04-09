@@ -1,0 +1,13 @@
+--find-links https://download.pytorch.org/whl/torch_stable.html
+
+numpy==1.19.0
+dataclasses==0.8
+google-cloud-core==1.6.0
+google-cloud-storage==1.37.0
+googleapis-common-protos==1.53.0
+protobuf==3.15.6
+git+git://github.com/yycho0108/tfrecord.git@gcs-seq#egg=tfrecord
+torch==1.7.1+cu101
+# torch-xla is a bit of a mess. configure as needed on your machine.
+https://storage.googleapis.com/tpu-pytorch/wheels/torch_xla-1.7-cp36-cp36m-linux_x86_64.whl
+torchvision==0.8.2+cu101
