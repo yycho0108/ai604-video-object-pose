@@ -50,7 +50,7 @@ def decode(example, feature_names:List[str] = []):
     
 class Objectron(th.utils.data.IterableDataset):
     """
-    Objectron dataset (currently configured for loading sequences only).
+    Objectron dataset
     """
 
     @dataclass
@@ -147,7 +147,9 @@ class Objectron(th.utils.data.IterableDataset):
                 example = r.read_example()
                 if not example: break
 
-                features = decode(example)
+                # If you need other features, then append the features to feature_names
+                feature_names = []
+                features = decode(example, feature_names=feature_names)
                 features['class_name'] = class_name
                 features['class_index'] = class_index
             
@@ -158,10 +160,6 @@ class Objectron(th.utils.data.IterableDataset):
 
 def main():
     opts = Objectron.Settings()
-    # xfm = transforms.Compose([
-    #     DecodeImage(size=(480, 640)),
-    #     ParseFixedLength(ParseFixedLength.Settings()),
-    # ])
     dataset = Objectron(opts)
     loader = th.utils.data.DataLoader(
         dataset, batch_size=2, num_workers=0,
