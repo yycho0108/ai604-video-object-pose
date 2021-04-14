@@ -11,6 +11,7 @@ from typing import List, Tuple, Dict
 from PIL import Image
 import numpy as np
 import pickle
+from tqdm import tqdm
 
 # torch+torchvision
 import torch as th
@@ -167,6 +168,54 @@ class Objectron(th.utils.data.IterableDataset):
                 if self.xfm is not None:
                     out = self.xfm(out)
                 yield out
+
+
+class SampleObjectron(th.utils.data.IterableDataset):
+    """
+    Class that behaves exactly like `Objectron`, except
+    this class loads from a locally cached data, for convenience.
+    Prefer this class for testing / validation / EDA.
+    """
+    @dataclass
+    class Settings:
+        cache_dir: str = '~/.cache/ai604/'
+        num_samples: int = 8  # how many samples to fetch
+        objectron: Objectron.Settings = Objectron.Settings()
+
+    def __init__(self, opts: Settings, transform=None):
+        self.opts = opts
+        self.objectron = Objectron(self.opts.objectron)
+        self.data = self._build()
+        self.xfm = transform
+
+    def _build(self):
+        # TODO(ycho): Avoid duplicating path resolution code.
+        prefix = 'train' if self.opts.objectron.train else 'test'
+        samples_cache = F'{self.opts.cache_dir}/{prefix}-sample.pkl'
+        samples_path = Path(samples_cache).expanduser()
+        # TODO(ycho): Avoid duplicating caching code.
+        if not samples_path.exists():
+            # Download data from scratch ...
+            samples = []
+            for i, data in tqdm(enumerate(self.objectron)):
+                samples.append(data)
+                if i >= self.opts.num_samples:
+                    break
+            with open(str(samples_path), 'wb') as f:
+                pickle.dump(samples, f)
+        else:
+            with open(str(samples_path), 'rb') as f:
+                samples = pickle.load(f)
+        return samples
+
+    def __iter__(self):
+        index = 0
+        while True:
+            index += 1
+            out = self.data[index % self.opts.num_samples]
+            if self.xfm is not None:
+                out = self.xfm(out)
+            yield out
 
 
 class DecodeImage:
