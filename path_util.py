@@ -23,6 +23,11 @@ def _ensure_directory(path: str):
 class RunPath(object):
     """
     General path management over multiple experiment runs.
+
+    NOTE(ycho): The intent of this class is mainly to avoid overwriting
+    checkpoints and existing logs from a previous run -
+    instead, we maintain a collision-free index based key
+    for each experiment that we run and use them in a sub-folder structure.
     """
     @dataclass
     class Settings:
