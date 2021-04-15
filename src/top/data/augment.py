@@ -2,12 +2,14 @@
 
 from dataclasses import dataclass
 
+from typing import Tuple
+
 import torch as th
 import torch.nn as nn
 import torchvision.io as thio
 from torchvision import transforms
 
-from objectron_dataset import (
+from top.data.objectron_dataset import (
     Objectron,
     SampleObjectron,
     DecodeImage,
@@ -63,7 +65,8 @@ def main():
         collate_fn=_skip_none)
 
     for data in loader:
-        # print(data)
+        context, features = data
+        print(features['image'].shape)
         break
 
 

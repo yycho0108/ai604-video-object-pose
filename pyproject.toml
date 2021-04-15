@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "top"
+version = "0.1.0"
+description = "Temporal Object Pose Estimation : KAIST AI604"
+authors = ["Yoonyoung Cho <jchocholate@gmail.com>", "Jiyong Ahn <ajy8456@gmail.com>"]
+license = "MIT"
+packages = [
+    { include = "top", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.6.9"
+tfrecord = { git = "https://github.com/yycho0108/tfrecord.git", branch = "gcs-seq" }
+torch = {url = "https://download.pytorch.org/whl/cu101/torch-1.7.1%2Bcu101-cp36-cp36m-linux_x86_64.whl"}
+torchvision = {url = "https://download.pytorch.org/whl/cu101/torchvision-0.8.2%2Bcu101-cp36-cp36m-linux_x86_64.whl"}
+dataclasses = {version = ">=0.8", python = ">=3.6,<3.7"}
+numpy = [
+    {version = ">=1.19,<1.20", python = ">=3.6,<3.7"},
+    {version = ">=1.20", python = ">=3.7"}
+]
+torch-xla = {url = "https://storage.googleapis.com/tpu-pytorch/wheels/torch_xla-1.7-cp36-cp36m-linux_x86_64.whl"}
+google-cloud-storage = "^1.37.1"
+
+[tool.poetry.dev-dependencies]
+matplotlib = [
+ {version = ">=3.1.2,<3.4", python = ">=3.6,<3.7"},
+ {version = ">=3.4", python = ">=3.7"}
+]
+tqdm = "^4.60.0"
+
+[build-system]
+requires = ["setuptools", "wheel", "poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
