@@ -27,6 +27,8 @@ matplotlib = [
  {version = ">=3.4", python = ">=3.7"}
 ]
 tqdm = "^4.60.0"
+simple-parsing = "^0.0.14"
+tensorboard = "^2.5.0"
 
 [build-system]
 requires = ["setuptools", "wheel", "poetry-core>=1.0.0"]
