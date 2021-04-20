@@ -1,5 +1,5 @@
 """
-Util classes for computing evaluation metrics.
+Util classes for computing evaluation metrics.(HitMiss, Accuracy, AveragePrecision)
 Reference: https://github.com/google-research-datasets/Objectron/blob/master/objectron/dataset/metrics.py
 """
 
