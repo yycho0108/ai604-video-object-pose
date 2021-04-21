@@ -73,8 +73,6 @@ class Box(object):
                                                                self.vertices[i, 2])
         return representation
 
-    def __len__(self):
-        return NUM_KEYPOINTS
 
     def __name__(self):
         return 'Box'
@@ -113,7 +111,7 @@ class Box(object):
         # Define the local coordinate system, w.r.t. the center of the box
         aabb = np.array([[0., 0., 0.], [-w, -h, -d], [-w, -h, +d],
                          [-w, +h, -d], [-w, +h, +d], [+w, -h, -d],
-                         [+w, -h, +d], [+w, +h, -d],[+w, +h, +d]])
+                         [+w, -h, +d], [+w, +h, -d], [+w, +h, +d]])
         return aabb
 
     @classmethod

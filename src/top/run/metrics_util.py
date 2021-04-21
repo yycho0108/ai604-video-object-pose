@@ -136,7 +136,6 @@ class IoU(object):
         self._intersection_points = []
 
     def iou(self):
-        """Computes the exact IoU using Sutherland-Hodgman algorithm."""
         self._intersection_points = []
         self._compute_intersection_points(self._box1, self._box2)
         self._compute_intersection_points(self._box2, self._box1)
