@@ -235,7 +235,7 @@ def main():
     # NOTE(ycho): Currently missing `loss_fn`
     #trainer = Trainer(Trainer.Settings(),
     #                  model, optimizer, callbacks, train_loader)
-
+    pass
 
 if __name__ == '__main__':
     main()
