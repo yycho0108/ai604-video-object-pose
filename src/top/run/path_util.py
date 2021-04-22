@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import logging
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -29,12 +30,13 @@ class RunPath(object):
     instead, we maintain a collision-free index based key
     for each experiment that we run and use them in a sub-folder structure.
     """
+
     @dataclass
     class Settings:
         key_format: str = 'run-{:03d}'
         root: str = '/tmp/'  # Alternatively, ~/.cache/ai604/run/
-        key: str = None
-
+        key: str = '' # Empty string indicates auto increment.
+ 
     def __init__(self, opts: Settings):
         self.opts = opts
         self.root = Path(opts.root).expanduser()
@@ -42,13 +44,13 @@ class RunPath(object):
 
         # Resolve sub-directory key.
         key = opts.key
-        if key is None:
+        if key is '':
             key = self._resolve_key(self.root, self.opts.key_format)
-            print(F'key={key}')
+            logging.info(F'key={key}')
 
         self.dir = self.root / key
         _ensure_directory(self.dir)
-        print(F'self.dir={self.dir}')
+        logging.info(F'self.dir={self.dir}')
 
     @staticmethod
     def _resolve_key(root: str, key_fmt: str) -> str:
@@ -79,9 +81,9 @@ def main():
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmpdir:
         rp = RunPath(RunPath.Settings(root=tmpdir))
-        print(rp.log)
+        logging.debug(rp.log)
         rp2 = RunPath(RunPath.Settings(root=tmpdir))
-        print(rp2.log)
+        logging.debug(rp2.log)
 
 
 if __name__ == '__main__':
