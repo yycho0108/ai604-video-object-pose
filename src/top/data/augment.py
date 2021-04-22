@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from dataclasses import dataclass
-
+from simple_parsing import Serializable
 from typing import Tuple
 
 import torch as th
@@ -22,9 +22,9 @@ class PhotometricAugment:
     Apply photometric augmentation.
     """
     @dataclass
-    class Settings:
-        brightness: Tuple[float, float] = (0.2, 2.0)
-        contrast: Tuple[float, float] = (0.3, 2.0)
+    class Settings(Serializable):
+        brightness: Tuple[float, float] = (0.4, 1.5)
+        contrast: Tuple[float, float] = (0.6, 1.5)
         saturation: Tuple[float, float] = (0.2, 2.0)
         hue: Tuple[float, float] = (-0.3, 0.3)
 
@@ -47,8 +47,8 @@ class PhotometricAugment:
         if not self.in_place:
             features = features.copy()
 
-        features['image'] = self.xfm(features['image'])
-
+        augmented_image = self.xfm(features['image'])
+        features['image'] = augmented_image
         return (context, features)
 
 
@@ -56,7 +56,7 @@ def main():
     opts = SampleObjectron.Settings()
     xfm = transforms.Compose([
         DecodeImage(size=(480, 640)),
-        ParseFixedLength(ParseFixedLength.Settings()),
+        ParseFixedLength(ParseFixedLength.Settings(seq_len=4)),
         PhotometricAugment(PhotometricAugment.Settings())
     ])
     dataset = SampleObjectron(opts, xfm)

@@ -4,7 +4,7 @@ import torch as th
 from typing import Union
 
 
-def resolve_device(device: Union[None, str, th.device]) -> th.device:
+def resolve_device(device: Union[None, str, th.device] = None) -> th.device:
     """ Resolve torch device based on user input. """
     if device:
         device = th.device(device)

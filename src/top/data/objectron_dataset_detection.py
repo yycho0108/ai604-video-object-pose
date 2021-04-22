@@ -6,6 +6,7 @@ import os
 import sys
 import io
 from dataclasses import dataclass
+from simple_parsing import Serializable
 from pathlib import Path
 from typing import List, Tuple, Dict
 from PIL import Image
@@ -14,12 +15,14 @@ import pickle
 
 # torch+torchvision
 import torch as th
-import torch.nn as nn
 import torchvision.io as thio
 from torchvision import transforms
 
 import torch_xla.utils.tf_record_reader as tfrr
 from google.cloud import storage
+
+from top.data.cached_dataset import CachedDataset
+from top.run.app_util import update_settings
 
 
 NUM_KEYPOINTS = 9
@@ -30,7 +33,8 @@ def _glob_objectron(bucket_name: str, prefix: str):
     blobs = client.list_blobs(bucket_name, prefix=prefix)
     return [blob.name for blob in blobs]
 
-def decode(example, feature_names:List[str] = []):
+
+def decode(example, feature_names: List[str] = []):
     w = example['image/width'].item()
     h = example['image/height'].item()
     points = example['point_2d'].numpy()
@@ -40,21 +44,28 @@ def decode(example, feature_names:List[str] = []):
     image = Image.open(io.BytesIO(image_data))
     npa = np.asarray(image)
     out = {
-        'image' : th.from_numpy(npa),
-        'points' : points,
-        'num_instances' : num_instances
+        # NOTE(ycho) HWC(np,pil) -> CHW(torch)
+        'image': th.from_numpy(npa.transpose(2, 0, 1)),
+        'points': points,
+        'num_instances': num_instances,
+        'object/translation': example['object/translation'],
+        'object/orientation': example['object/orientation'],
+        'object/scale': example['object/scale'],
+        'camera/projection': example['camera/projection']
     }
 
-    out.update({k:example[k] for k in feature_names})
+    out.update({k: example[k] for k in feature_names})
     return out
-    
+
+
 class Objectron(th.utils.data.IterableDataset):
     """
-    Objectron dataset
+    Objectron dataset.
+    TODO(ycho): Rename to `ObjectronDetection`.
     """
 
     @dataclass
-    class Settings:
+    class Settings(Serializable):
         bucket_name: str = 'objectron'
         classes: Tuple[str] = (
             'bike',
@@ -103,6 +114,7 @@ class Objectron(th.utils.data.IterableDataset):
     def _get_shards(self):
         """ return list of shards, potentially memoized for efficiency """
         prefix = 'train' if self.opts.train else 'test'
+        # FIXME(ycho): hardcoded {prefix}-det-shards
         shards_cache = F'{self.opts.cache_dir}/{prefix}-det-shards.pkl'
 
         shards_path = Path(shards_cache).expanduser()
@@ -141,32 +153,66 @@ class Objectron(th.utils.data.IterableDataset):
             # This is to avoid awkward string conversion later.
             class_name = shard.split('/')[-2]
             class_index = self._index_from_class(class_name)
-            
-            r = tfrr.TfRecordReader(shard_name, compression='', transforms=None)
+
+            r = tfrr.TfRecordReader(
+                shard_name, compression='', transforms=None)
             while True:
                 example = r.read_example()
-                if not example: break
+                if not example:
+                    break
 
-                # If you need other features, then append the features to feature_names
+                # If you need other features, then append the features to
+                # feature_names
                 feature_names = []
                 features = decode(example, feature_names=feature_names)
                 features['class_name'] = class_name
                 features['class_index'] = class_index
-            
+
             output = features
             if self.xfm:
                 output = self.xfm(output)
             yield output
 
+
+class SampleObjectron(th.utils.data.IterableDataset):
+    """
+    Class that behaves exactly like `Objectron`, except
+    this class loads from a locally cached data, for convenience.
+    Prefer this class for testing / validation / EDA.
+
+    @see CachedDataset, Objectron.
+    """
+    @dataclass
+    class Settings(Serializable):
+        cache: CachedDataset.Settings = CachedDataset.Settings()
+        objectron: Objectron.Settings = Objectron.Settings()
+
+    def __init__(self, opts: Settings, transform=None):
+        self.opts = opts
+        # NOTE(ycho): delegate most of the heavy lifting
+        # to `CachedDataset`.
+        prefix = 'train' if self.opts.objectron.train else 'test'
+        # FIXME(ycho): hardcoded {prefix}-det-sample
+        self.dataset = CachedDataset(opts.cache,
+                                     lambda: Objectron(self.opts.objectron),
+                                     F'{prefix}-det-sample',
+                                     transform=transform)
+        self.xfm = transform
+
+    def __iter__(self):
+        return self.dataset.__iter__()
+
+
 def main():
-    opts = Objectron.Settings()
-    dataset = Objectron(opts)
+    opts = SampleObjectron.Settings()
+    opts = update_settings(opts)
+    dataset = SampleObjectron(opts)
     loader = th.utils.data.DataLoader(
-        dataset, batch_size=2, num_workers=0,
+        dataset, batch_size=1, num_workers=0,
         collate_fn=None)
 
     for data in loader:
-        print(data)
+        print(data['points'])
         break
 
 

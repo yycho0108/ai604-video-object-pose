@@ -29,6 +29,12 @@ matplotlib = [
 tqdm = "^4.60.0"
 simple-parsing = "^0.0.14"
 tensorboard = "^2.5.0"
+kornia = "^0.5.0"
+pytorch3d = {url = "https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py36_cu101_pyt171/pytorch3d-0.4.0-cp36-cp36m-linux_x86_64.whl"}
+argcomplete = "^1.12.3"
+ipykernel = "^5.5.3"
+jupyter = "^1.0.0"
+jupyterlab = "^3.0.14"
 
 [build-system]
 requires = ["setuptools", "wheel", "poetry-core>=1.0.0"]
