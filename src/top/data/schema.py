@@ -2,8 +2,6 @@
 
 from enum import Enum
 
-class
-
 
 class Schema(Enum):
     """
