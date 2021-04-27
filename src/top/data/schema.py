@@ -16,11 +16,3 @@ class Schema(Enum):
     SCALE = "object/scale"
     CLASS = "object/class"  # NOTE(ycho): Class index, integer.
     PROJECTION = "camera/projection"
-
-
-def main():
-    a = {'image': 5}
-
-
-if __name__ == '__main__':
-    main()
