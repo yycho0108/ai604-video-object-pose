@@ -25,9 +25,10 @@ from pytorch3d.renderer import (
 
 from top.run.torch_util import resolve_device
 from top.run.app_util import update_settings
+from top.data.schema import Schema
 
 
-class ColoredCubeDataset(th.utils.data.Dataset):
+class ColoredCubeDataset(th.utils.data.IterableDataset):
     """
     Toy generative dataset for 3D object detection:
     vertices of an oriented unit cube rendered as a point cloud.
@@ -46,6 +47,8 @@ class ColoredCubeDataset(th.utils.data.Dataset):
         min_distance: float = 0.1
         max_distance: float = 10.0
         image_size: Tuple[int, int] = (256, 256)  # Order: H W
+        # Unstack output tensors, for compatibility with Objectron.
+        unstack: bool = True
 
     def __init__(self, opts: Settings, device: th.device = '', transform=None):
         super().__init__()
@@ -106,6 +109,7 @@ class ColoredCubeDataset(th.utils.data.Dataset):
         """
         vertices = list(itertools.product(
             *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))
+        vertices = np.insert(vertices, 0, [0, 0, 0], axis=0)
         vertices = th.as_tensor(vertices, dtype=th.float32, device=self.device)
         vertices = vertices
 
@@ -209,19 +213,32 @@ class ColoredCubeDataset(th.utils.data.Dataset):
             # TODO(ycho): Figure out a way to unify these formats.
             # see ai604-video-object-pose#10
             out = {
-                'image': img,
-                'object/orientation': orientation,
-                'object/translation': T,
-                'object/scale': th.full_like(T, 1.0),
-                'points': points_2d,
-                'num_instances': th.ones(
+                Schema.IMAGE: img,
+                # NOTE(ycho): For now, only have `1` object per image.
+                Schema.CLASS: th.zeros((self.opts.batch_size, 1), dtype=th.int32,
+                                       device=self.device),
+                Schema.ORIENTATION: orientation,
+                Schema.TRANSLATION: T,
+                Schema.SCALE: th.full_like(T, 1.0),
+                Schema.KEYPOINT_2D: points_2d,
+                Schema.INSTANCE_NUM: th.ones(
                     self.opts.batch_size,
                     device=self.device),
-                'camera/projection': projection,
+                Schema.PROJECTION: projection,
             }
-            if self.xfm is not None:
-                out = self.xfm(out)
-            yield out
+
+            # Unstack the batched render into a set of images, for compatibility with Objectron.
+            # NOTE(ycho): See if this results in a significant performance hit.
+            if self.opts.unstack:
+                for i in range(self.opts.batch_size):
+                    out_i = {k: v[i] for k, v in out.items()}
+                    if self.xfm is not None:
+                        out_i = self.xfm(out_i)
+                    yield out_i
+            else:
+                if self.xfm is not None:
+                    out = self.xfm(out)
+                yield out
 
 
 def main():

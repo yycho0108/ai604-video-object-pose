@@ -18,10 +18,10 @@ import torch as th
 import torchvision.io as thio
 from torchvision import transforms
 
-import torch_xla.utils.tf_record_reader as tfrr
 from google.cloud import storage
 
 from top.data.cached_dataset import CachedDataset
+from top.data.schema import Schema
 from top.run.app_util import update_settings
 
 
@@ -40,18 +40,28 @@ def decode(example, feature_names: List[str] = []):
     points = example['point_2d'].numpy()
     num_instances = example['instance_num'].item()
     points = points.reshape(num_instances, NUM_KEYPOINTS, 3)
-    image_data = example['image/encoded'].numpy().tobytes()
-    image = Image.open(io.BytesIO(image_data))
-    npa = np.asarray(image)
+
+    if False:
+        image_data = example['image/encoded'].numpy().tobytes()
+        image = Image.open(io.BytesIO(image_data))
+        image = np.asarray(image)
+        image = th.from_numpy(image.transpose(2, 0, 1))
+    else:
+        # NOTE(ycho): Loading directly with torch to avoid warnings with PIL.
+        # NOTE(ycho): The ONLY reason this works is because the original data was
+        # formatted in uint8 and implicitly cast to int8 in the reading
+        # process.
+        img_bytes = example['image/encoded'].to(dtype=th.uint8)
+        image = thio.decode_image(img_bytes)
+
     out = {
-        # NOTE(ycho) HWC(np,pil) -> CHW(torch)
-        'image': th.from_numpy(npa.transpose(2, 0, 1)),
-        'points': points,
-        'num_instances': num_instances,
-        'object/translation': example['object/translation'],
-        'object/orientation': example['object/orientation'],
-        'object/scale': example['object/scale'],
-        'camera/projection': example['camera/projection']
+        Schema.IMAGE: image,
+        Schema.KEYPOINT_2D: points,
+        Schema.INSTANCE_NUM: num_instances,
+        Schema.TRANSLATION: example['object/translation'],
+        Schema.ORIENTATION: example['object/orientation'],
+        Schema.SCALE: example['object/scale'],
+        Schema.PROJECTION: example['camera/projection']
     }
 
     out.update({k: example[k] for k in feature_names})
@@ -144,6 +154,10 @@ class Objectron(th.utils.data.IterableDataset):
 
     def __iter__(self):
 
+        # NOTE(ycho): FOR NOW, I moved this import inside __iter__
+        # To prevent very sad side-effects from torch_xla.
+        import torch_xla.utils.tf_record_reader as tfrr
+
         # Contiguous block slice among shards
         for shard in self.shards:
             # Resolve shard name relative to bucket.
@@ -166,7 +180,8 @@ class Objectron(th.utils.data.IterableDataset):
                 feature_names = []
                 features = decode(example, feature_names=feature_names)
                 features['class_name'] = class_name
-                features['class_index'] = class_index
+                features[Schema.CLASS] = th.full(
+                    (int(features[Schema.INSTANCE_NUM]),), class_index)
 
             output = features
             if self.xfm:

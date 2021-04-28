@@ -16,3 +16,7 @@ class Schema(Enum):
     SCALE = "object/scale"
     CLASS = "object/class"  # NOTE(ycho): Class index, integer.
     PROJECTION = "camera/projection"
+    KEYPOINT_MAP = "keypoint_map"
+    HEATMAP = "object/heatmap"
+    HEATMAP_LOGITS = "object/heatmap_logits"
+    DISPLACEMENT_MAP = "displacement_map"
