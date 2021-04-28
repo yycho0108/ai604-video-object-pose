@@ -6,6 +6,7 @@ import os
 import sys
 import io
 from dataclasses import dataclass
+from simple_parsing import Serializable
 from pathlib import Path
 from typing import List, Tuple, Dict
 from PIL import Image
@@ -22,6 +23,8 @@ from torchvision import transforms
 from tfrecord.reader import sequence_loader
 from google.cloud import storage
 
+from top.data.cached_dataset import CachedDataset
+
 
 def _glob_objectron(bucket_name: str, prefix: str):
     client = storage.Client.create_anonymous_client()
@@ -32,10 +35,11 @@ def _glob_objectron(bucket_name: str, prefix: str):
 class Objectron(th.utils.data.IterableDataset):
     """
     Objectron dataset (currently configured for loading sequences only).
+    TODO(ycho): Rename to `ObjectronSequence`.
     """
 
     @dataclass
-    class Settings:
+    class Settings(Serializable):
         bucket_name: str = 'objectron'
         classes: Tuple[str] = (
             'bike',
@@ -175,47 +179,27 @@ class SampleObjectron(th.utils.data.IterableDataset):
     Class that behaves exactly like `Objectron`, except
     this class loads from a locally cached data, for convenience.
     Prefer this class for testing / validation / EDA.
+
+    @see CachedDataset, Objectron.
     """
     @dataclass
-    class Settings:
-        cache_dir: str = '~/.cache/ai604/'
-        num_samples: int = 8  # how many samples to fetch
+    class Settings(Serializable):
+        cache: CachedDataset.Settings = CachedDataset.Settings()
         objectron: Objectron.Settings = Objectron.Settings()
 
     def __init__(self, opts: Settings, transform=None):
         self.opts = opts
-        self.objectron = Objectron(self.opts.objectron)
-        self.data = self._build()
+        # NOTE(ycho): delegate most of the heavy lifting
+        # to `CachedDataset`.
+        prefix = 'train' if self.opts.objectron.train else 'test'
+        self.dataset = CachedDataset(opts.cache,
+                                     lambda: Objectron(self.opts.objectron),
+                                     F'{prefix}-sample',
+                                     transform=transform)
         self.xfm = transform
 
-    def _build(self):
-        # TODO(ycho): Avoid duplicating path resolution code.
-        prefix = 'train' if self.opts.objectron.train else 'test'
-        samples_cache = F'{self.opts.cache_dir}/{prefix}-sample.pkl'
-        samples_path = Path(samples_cache).expanduser()
-        # TODO(ycho): Avoid duplicating caching code.
-        if not samples_path.exists():
-            # Download data from scratch ...
-            samples = []
-            for i, data in tqdm(enumerate(self.objectron)):
-                samples.append(data)
-                if i >= self.opts.num_samples:
-                    break
-            with open(str(samples_path), 'wb') as f:
-                pickle.dump(samples, f)
-        else:
-            with open(str(samples_path), 'rb') as f:
-                samples = pickle.load(f)
-        return samples
-
     def __iter__(self):
-        index = 0
-        while True:
-            index += 1
-            out = self.data[index % self.opts.num_samples]
-            if self.xfm is not None:
-                out = self.xfm(out)
-            yield out
+        return self.dataset.__iter__()
 
 
 class DecodeImage:
@@ -262,7 +246,9 @@ class ParseFixedLength:
     FIXME(ycho): Isn't it a bit wasteful to slice up a full video once
     and discard the reset?? Discuss strategies on overcoming correlated-samples issue
     """
-    class Settings:
+
+    @dataclass
+    class Settings(Serializable):
         seq_len: int = 8  # length of sub-sequence to extract
         max_num_inst: int = 4  # max number of instances in the frame
         stride: int = 4  # number of intermediate frames to skip
@@ -339,12 +325,12 @@ def _skip_none(batch):
 
 
 def main():
-    opts = Objectron.Settings()
+    opts = SampleObjectron.Settings()
     xfm = transforms.Compose([
         DecodeImage(size=(480, 640)),
         ParseFixedLength(ParseFixedLength.Settings()),
     ])
-    dataset = Objectron(opts, xfm)
+    dataset = SampleObjectron(opts, xfm)
     loader = th.utils.data.DataLoader(
         dataset, batch_size=2, num_workers=0,
         collate_fn=_skip_none)
