@@ -7,144 +7,100 @@ Reference:
     https://github.com/skhadem/3D-BoundingBox
 """
 
+from dataclasses import dataclass, replace
+from simple_parsing import Serializable
 
 import torch as th
-import numpy as np
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-from top.model.backbone import resnet_fpn_backbone
-from top.model.loss_util import *
+from torchvision.transforms import Compose
+
+from top.train.trainer import Trainer
+from top.train.callback import Callbacks, EvalCallback, SaveModelCallback
+
+from top.run.app_util import update_settings
+from top.run.path_util import RunPath
+from top.run.torch_util import resolve_device
+
+from top.model.bbox_3d import BoundingBoxRegressionModel
+from top.model.loss_util import orientation_loss, generate_bins
+
+from top.data.objectron_dataset_detection import Objectron
+from top.data.schema import Schema
 
 
-
-class BoundingBoxRegressionModel(nn.Module):
-    def __init__(self, features:th.nn.Module=None, bins=2, w = 0.4):
-        super(BoundingBoxRegressionModel, self).__init__()
-        self.bins = bins
-        self.w = w
-        self.features = features
-
-        self.confidence = nn.Sequential(
-                    nn.Linear(512 * 7 * 7, 256),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(256, 256),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(256, bins),
-                    nn.Softmax()
-                )
-
-        self.orientation = nn.Sequential(
-                    nn.Linear(512 * 7 * 7, 256),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(256, 256),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(256, bins*2) # to get sin and cos
-                )
-
-        self.scale = nn.Sequential(
-                    nn.Linear(512 * 7 * 7, 512),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(512, 512),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(512, 3)
-                )
-
-    def forward(self, x):
-        x = self.features(x) # 512 x 7 x 7
-        x = x.view(-1, 512 * 7 * 7)
-        confidence = self.confidence(x)
-        scale = self.scale(x)
-        # valid cos and sin values are obtained by applying an L2 norm.
-        tri_orientation = self.orientation(x)
-        tri_orientation = tri_orientation.view(-1, self.bins, 2)
-        tri_orientation = F.normalize(tri_orientation, dim=2)
-
-        return confidence, scale, tri_orientation
+@dataclass
+class AppSettings(Serializable):
+    model: BoundingBoxRegressionModel.Settings = BoundingBoxRegressionModel.Settings()
+    dataset: Objectron.Settings = Objectron.Settings()
+    path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
+    train: Trainer.Settings = Trainer.Settings()
+    batch_size: int = 8
+    alpha: float = 0.6
+    w: float = 0.4
+    device: str = ''
 
 
-def train():
+def load_data(opts: AppSettings, device: th.device):
+    # FIXME(Jiyong): data preprocessing for 3D bouning box regression
+    transform = None
+    data_opts = opts.dataset
     
-    # hyper parameters
-    epochs = 100
-    batch_size = 8
-    alpha = 0.6
-    w = 0.4
+    # For train data
+    data_opts = replace(data_opts, train=True)
+    train_dataset = Objectron(data_opts, transform)
+    # For test data
+    data_opts = replace(data_opts, train=False)
+    test_dataset = Objectron(data_opts, transform)
 
-    print("Loading all detected objects in dataset...")
+    train_loader = th.utils.data.DataLoader(train_dataset, batch_size=opts.batch_size)
+    test_loader = th.utils.data.DataLoader(test_dataset, batch_size=opts.batch_size)
 
-    train_path = os.path.abspath(os.path.dirname(__file__)) + '___'
-    dataset = Dataset(train_path)
+    return train_dataset, test_dataset
 
-    params = {'batch_size': batch_size,
-              'shuffle': True,
-              'num_workers': 6}
+def main():
 
-    generator = data.DataLoader(dataset, **params)
+    opts = AppSettings()
+    opts = update_settings(opts)
+    path = RunPath(opts.path)
 
-    backnone = resnet_fpn_backbone()
-    model = BoundingBoxRegressionModel(features=backnone.features).cuda()
-    optim = th.optim.Adam(model.parameters(), lr=0.0001, momentum=0.9)
+    device = resolve_device(opts.device)
+    model = BoundingBoxRegressionModel(opts.model).to(device)
+    optimizer = th.optim.Adam(model.parameters(), lr=1e-3)
 
-    conf_loss_func = nn.CrossEntropyLoss().cuda()
-    scale_loss_func = nn.MSELoss().cuda()
+    train_loader, test_loader = load_data(opts, device=device)
+
+    callbacks = Callbacks([])
+
+    conf_loss_func = nn.CrossEntropyLoss().to(device)
+    scale_loss_func = nn.MSELoss().to(device)
     orient_loss_func = orientation_loss
 
-    total_num_batches = int(len(dataset) / batch_size)
+    def loss_fn(model: th.nn.Module, data):
+        # Now that we're here, convert all inputs to the device.
+        data = {k: v.to(device) for (k, v) in data.items()}
 
-    for epoch in range(epochs):
-        curr_batch = 0
-        passes = 0
-        for local_batch, local_labels in generator:
+        image = data[Schema.IMAGE]
+        orient, conf, dim = model(image)
+        
+        # FIXME(Jiyong): modify to Objectron
+        truth_orient = data['Orientation'].float().to(device)
+        truth_conf = data['Confidence'].long().to(device)
+        truth_dim = data['scale'].float().to(device)
 
-            truth_orient = local_labels['Orientation'].float().cuda()
-            truth_conf = local_labels['Confidence'].long().cuda()
-            truth_dim = local_labels['translation'].float().cuda()
-            truth_dim = local_labels['scale'].float().cuda()
+        scale_loss = scale_loss_func(dim, truth_dim)
+        orient_loss = orient_loss_func(orient, truth_orient, truth_conf)
 
-            local_batch=local_batch.float().cuda()
-            [orient, conf, dim] = model(local_batch)
+        truth_conf = th.max(truth_conf, dim=1)[1]
+        conf_loss = conf_loss_func(conf, truth_conf)
 
-            scale_loss = scale_loss_func(dim, truth_dim)
-            orient_loss = orient_loss_func(orient, truth_orient, truth_conf)
+        loss_theta = conf_loss + opts.w * orient_loss
+        loss = opts.alpha * scale_loss + loss_theta
 
-            truth_conf = th.max(truth_conf, dim=1)[1]
-            conf_loss = conf_loss_func(conf, truth_conf)
+        return loss
 
-            loss_theta = conf_loss + w * orient_loss
-            loss = alpha * scale_loss + loss_theta
+    trainer = Trainer(opts.train, model, optimizer, loss_fn, callbacks, train_loader)
 
-            optim.zero_grad()
-            loss.backward()
-            optim.step()
-
-            if passes % 10 == 0:
-                print("--- epoch %s | batch %s/%s --- [loss: %s]" %(epoch, curr_batch, total_num_batches, loss.item()))
-                passes = 0
-
-            passes += 1
-            curr_batch += 1
-
-        # save after every 10 epochs
-        if epoch % 10 == 0:
-            name = model_path + 'epoch_%s.pkl' % epoch
-            print("====================")
-            print ("Done with epoch %s!" % epoch)
-            print ("Saving weights as %s ..." % name)
-            th.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optim.state_dict(),
-                    'loss': loss
-                    }, name)
-            print("====================")
-
+    trainer.train()
 
 if __name__=='__main__':
-    train()
+    main()
