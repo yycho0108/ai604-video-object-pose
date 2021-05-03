@@ -72,6 +72,7 @@ class Trainer(object):
                 # e.g. for logging, simply register a hook to the loss module
                 # rather than trying to extract them here.
                 loss = self.loss_fn(self.model, data)
+                print(loss)
 
                 # Backprop + Optimize ...
                 self.optim.zero_grad()

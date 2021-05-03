@@ -9,6 +9,8 @@ import torch.nn as nn
 import torchvision.io as thio
 from torchvision import transforms
 
+from top.data.schema import Schema
+
 from top.data.objectron_dataset import (
     Objectron,
     SampleObjectron,

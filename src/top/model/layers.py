@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from simple_parsing import Serializable
+from typing import Tuple, Dict
 
 import torch as th
 import torch.nn as nn
@@ -57,6 +58,75 @@ class EncoderBlock(nn.Module):
         return x
 
 
+class DisplacementLayer2D(nn.Module):
+    @dataclass
+    class Settings(Serializable):
+        hidden: Tuple[int] = ()
+        # NOTE(ycho): 8 vertices by default, excluding centroid.
+        num_keypoints: int = 8
+
+    def __init__(self, opts: Settings, c_in: int):
+        super().__init__()
+
+        channels = [c_in]
+        for h in opts.hidden:
+            channels.append(h)
+
+        # Add intermediate convolutional layers.
+        layers = []
+        for prv, nxt in zip(channels[:-1], channels[1:]):
+            conv = nn.Conv2d(prv, nxt, kernel_size=3, padding=1, bias=True)
+            # TODO(ycho): Determine if layers such as batchnorm
+            # would be necessary here.
+            relu = nn.ReLU(inplace=True)
+            layers.extend([conv, relu])
+
+        # Add final unbounded output.
+        out_channels = opts.num_keypoints * 2
+        layers.append(
+            nn.Conv2d(
+                channels[-1],
+                out_channels, kernel_size=1, stride=1, padding=0))
+
+        self.output = nn.Sequential(*layers)
+
+    def forward(self, inputs: th.Tensor):
+        return self.output(inputs)
+
+
+class HeatmapLayer2D(nn.Module):
+
+    @dataclass
+    class Settings(Serializable):
+        hidden: Tuple[int] = ()
+        num_class: int = 9
+
+    def __init__(self, opts: Settings, c_in: int):
+        super().__init__()
+
+        channels = [c_in]
+        for h in opts.hidden:
+            channels.append(h)
+
+        # Add intermediate convolutional layers.
+        layers = []
+        for prv, nxt in zip(channels[:-1], channels[1:]):
+            conv = nn.Conv2d(prv, nxt, kernel_size=3, padding=1, bias=True)
+            relu = nn.ReLU(inplace=True)
+            layers.extend([conv, relu])
+
+        # Add final unbounded output which produces logits.
+        layers.append(
+            nn.Conv2d(
+                channels[-1],
+                opts.num_class, kernel_size=1, stride=1, padding=0))
+
+        self.output = nn.Sequential(*layers)
+
+    def forward(self, inputs):
+        return self.output(inputs)
+
+
 class KeypointLayer2D(nn.Module):
     """
     Placeholder for classification-style keypoint prediction in 2D.
@@ -97,6 +167,6 @@ class KeypointLayer3D(nn.Module):
 
     def forward(self, inputs):
         # heatmap ...
-        hm = F.sigmoid(self.conv_hm(inputs))
+        hm = th.sigmoid(self.conv_hm(inputs))
         # depth ...
-        depth = 1.0 / F.sigmoid(self.conv_invd(inputs) + 1e-6) - 1.0
+        depth = 1.0 / th.sigmoid(self.conv_invd(inputs) + 1e-6) - 1.0
