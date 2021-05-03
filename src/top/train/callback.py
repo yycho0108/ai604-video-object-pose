@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 
+"""
+This module defines a set of lightweight Keras-like callback system
+for logging and evaluation (among other functions).
+
+However, it has been largely deprecated at this point in favor of the
+event-bus based system which allowed for greater flexibility.
+"""
+
+
 from dataclasses import dataclass
 from typing import (Union, Callable, List, Dict, Tuple, Optional, Any)
 from pathlib import Path
@@ -8,6 +17,7 @@ import torch as th
 import logging
 
 from top.train.saver import Saver
+from tqdm.auto import tqdm
 
 
 class Callback(object):

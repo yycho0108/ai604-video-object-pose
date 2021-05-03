@@ -10,11 +10,14 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.utils.tensorboard import SummaryWriter
 
-from top.train.callback import (
-    Callbacks, EvalCallback, SaveModelCallback)
+from top.train.event.hub import Hub
+from top.train.event.topics import Topic
+from top.train.event.helpers import (Collect, Periodic, Evaluator)
+
 from top.train.saver import Saver
 from top.train.trainer import Trainer
 
+from top.run.app_util import update_settings
 from top.run.path_util import RunPath
 from top.run.torch_util import resolve_device
 
@@ -26,6 +29,7 @@ class AppSettings(Serializable):
     batch_size: int = 32
     train: Trainer.Settings = Trainer.Settings(num_epochs=4)
     run: RunPath.Settings = RunPath.Settings(root='/tmp/mnist')
+    eval_period: int = int(1e3)
 
 
 class ConvBlock(nn.Module):
@@ -90,52 +94,43 @@ def load_data(opts: AppSettings):
     return (train_loader, test_loader)
 
 
-class Evaluator:
+class Accuracy:
     """
-    Aggregate statistics over multiple batch and log statistics.
-    Currently only computes accuracy, potentially might be generalizable.
+    Node that computes and produces accuracy metric.
     """
 
-    def __init__(self,
-                 writer: th.utils.tensorboard.SummaryWriter,
-                 device: th.device):
-        self.writer = writer
-        self.device = device
+    def __init__(self, hub: Hub, topic: str):
+        self.hub = hub
+        self.num_samples = 0
+        self.num_correct = 0.0
+        self.topic = topic
+        self._subscribe()
 
-        self.prev_step = None
+    def _on_eval_begin(self):
         self.num_samples = 0
         self.num_correct = 0.0
 
-    def __call__(self, step: int, model: nn.Module, data):
-        # Logging at the end of aggregation loop.
-        if (step != self.prev_step):
-            if self.prev_step is not None:
-                # Log derived stat (accuracy).
-                print(F'Acc = {self.num_correct}/{self.num_samples}')
-                accuracy = (self.num_correct / self.num_samples)
-                print(F'@{step} accuracy={accuracy} ')
-                self.writer.add_scalar('accuracy', accuracy, step)
-
-            # Reset stats.
-            self.num_samples = 0
-            self.num_correct = 0.0
-            self.prev_step = step
-
-        # Run evaluation ...
-        inputs, target = data
-        inputs = inputs.to(self.device)
-        target = target.to(self.device)
-        output = model(inputs)
-
-        # Aggregate statistics.
-        num_correct = (target == th.argmax(output, dim=1)).sum()
-        self.num_samples += inputs.shape[0]
+    def _on_eval_step(self, inputs, outputs):
+        _, target = inputs
+        target = target.to(outputs.get_device())
+        num_correct = (target == th.argmax(outputs, dim=1)).sum()
+        self.num_samples += target.shape[0]  # Assume batch dim == 0.
         self.num_correct += num_correct
+
+    def _on_eval_end(self):
+        accuracy = (self.num_correct / self.num_samples)
+        self.hub.publish(self.topic, accuracy)
+
+    def _subscribe(self):
+        self.hub.subscribe(Topic.EVAL_BEGIN, self._on_eval_begin)
+        self.hub.subscribe(Topic.EVAL_STEP, self._on_eval_step)
+        self.hub.subscribe(Topic.EVAL_END, self._on_eval_end)
 
 
 def main():
     # Settings ...
     opts = AppSettings()
+    opts = update_settings(opts)
 
     # Path configuration ...
     path = RunPath(opts.run)
@@ -162,13 +157,38 @@ def main():
 
     # Callbacks, logging, ...
     writer = th.utils.tensorboard.SummaryWriter(path.log)
-    evaluator = Evaluator(writer=writer, device=device)
-    callbacks = Callbacks([
-        EvalCallback(
-            EvalCallback.Settings(
-                num_samples=float('inf')
-            ), model, test_loader, eval_fn=evaluator)
-    ])
+
+    def _eval_fn(model, data):
+        inputs, _ = data
+        output = model(inputs.to(device))
+        return output
+
+    hub = Hub()
+
+    # TODO(ycho): The default behavior of evaluator (num_samples==1)
+    # might be confusing and unintuitive - prefer more reasonable default?
+    evaluator = Evaluator(
+        Evaluator.Settings(period=opts.eval_period, num_samples=128),
+        hub, model, test_loader, _eval_fn)
+
+    accuracy = Accuracy(hub, 'accuracy')
+    metrics = Collect(hub, Topic.METRICS,
+                      (Topic.STEP, 'accuracy'))
+
+    def _on_metrics(data):
+        # TODO(ycho): Fix clunky syntax with `Collect`.
+        step_arg, _ = data[Topic.STEP]
+        step = step_arg[0]
+        acc_arg, _ = data['accuracy']
+        accuracy = acc_arg[0]
+
+        # Print to stdout ...
+        print(F'@{step} accuracy={accuracy} ')
+
+        # Tensorboard logging ...
+        writer.add_scalar('accuracy', accuracy, step)
+
+    hub.subscribe(Topic.METRICS, _on_metrics)
 
     # Trainer
     trainer = Trainer(
@@ -176,7 +196,7 @@ def main():
         model,
         optimizer,
         loss_fn,
-        callbacks,
+        hub,
         train_loader)
 
     trainer.train()

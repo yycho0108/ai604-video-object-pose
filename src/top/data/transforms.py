@@ -99,10 +99,11 @@ class DenseMapsMobilePose:
         delta = th.arange(
             opts.kernel_size,
             device=device) - opts.kernel_size // 2
-        delta = th.exp_(-th.square_(delta) / (2.0 * opts.sigma**2))
-        # delta /= delta.sum()
-        delta /= delta.max()
-        out = delta[None, :] * delta[:, None]
+
+        gauss_1d = th.exp_(-th.square_(delta) / (2.0 * opts.sigma**2))
+        # NOTE(ycho): divide by max instead of sum.
+        gauss_1d /= gauss_1d.max()
+        out = gauss_1d[None, :] * gauss_1d[:, None]
         return out
 
     @staticmethod
