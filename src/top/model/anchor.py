@@ -4,7 +4,7 @@ Attempt to modify SSD anchor to 3D(scale:w,h,d). Create two kind of cube(small,l
 Reference: https://github.com/amdegroot/ssd.pytorch/blob/master/layers/functions/prior_box.py
 """
 
-from typing import List
+from typing import List, Tuple
 from dataclasses import dataclass
 from simple_parsing import Serializable
 from math import sqrt as sqrt
@@ -17,9 +17,9 @@ import torch
 @dataclass
 class AnchorSetting:
     image_size: int = 300
-    feature_maps: List[int] = (7,)
-    min_sizes: List[int] = (100,)
-    max_sizes: List[int] = (200,)
+    feature_maps: Tuple[int] = (7,)
+    min_sizes: Tuple[int] = (100,)
+    max_sizes: Tuple[int] = (200,)
 
 
 class Anchor(object):
@@ -31,7 +31,7 @@ class Anchor(object):
         self.min_sizes = cfg.min_sizes
         self.max_sizes = cfg.max_sizes
 
-    def forward(self):
+    def generate(self):
         mean = []
         for k, f in enumerate(self.feature_maps):
             for i, j in product(range(f), repeat=2):
@@ -58,7 +58,7 @@ class Anchor(object):
 def main():
     cfg = AnchorSetting()
     anchor = Anchor(cfg)
-    print(anchor.forward())
+    print(anchor.generate())
 
 if __name__ == '__main__':
     main()

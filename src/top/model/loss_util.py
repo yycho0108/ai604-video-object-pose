@@ -3,6 +3,7 @@ Util classes & methods for computing loss.
 Reference: https://github.com/xingyizhou/CenterNet/blob/master/src/lib/models/losses.py
 """
 
+import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
@@ -71,6 +72,36 @@ def _reg_loss(regr, gt_regr, mask):
     regr_loss = regr_loss / (num + 1e-4)
     
     return regr_loss
+
+
+def orientation_loss(tri_orient_batch, tri_orientGT_batch, confGT_batch):
+    """NOTE(Jiyong)
+    args: tri_orient means value of (cos,sin) not angle
+        tri_orient_batch: multibin of orientation(e.g. discretizate the orientation angle and divide it into n overlapping bins)
+        tri_orientGT_batch: orientation of ground truth
+        confGT_batch: which bin corresponds to the orientation of the ground truth
+    """
+
+    batch_size = tri_orient_batch.size()[0]
+    indexes = th.max(confGT_batch, dim=1)[1]
+
+    # extract just the important bin
+    tri_orientGT_batch = tri_orientGT_batch[th.arange(batch_size), indexes]
+    tri_orient_batch = tri_orient_batch[th.arange(batch_size), indexes]
+
+    theta_diff = th.atan2(tri_orientGT_batch[:,1], tri_orientGT_batch[:,0])
+    estimated_theta_diff = th.atan2(tri_orient_batch[:,1], tri_orient_batch[:,0])
+
+    return -1 * th.cos(theta_diff - estimated_theta_diff).mean()
+
+def generate_bins(bins):
+    angle_bins = np.zeros(bins)
+    interval = 2 * np.pi / bins
+    for i in range(1,bins):
+        angle_bins[i] = i * interval
+    angle_bins += interval / 2 # center of the bin
+
+    return angle_bins
 
 
 class FocalLoss(nn.Module):

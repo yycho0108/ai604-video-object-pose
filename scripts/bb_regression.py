@@ -1,38 +1,26 @@
 """
-(Like YOLO v3) ResNet -> feature map -> FC(confidence/translation/scale/orientation) -> 3D bounding box
+(Like YOLO v3) 2D object detector -> 2D Bounding Box -> crop the images
+feature map -> FC(confidence/scale/orientation) -> project 2D to 3D bounding box of cropped images
+
 Reference:
     3D Bounding Box Estimation Using Deep Learning and Geometry(https://arxiv.org/abs/1612.00496)
     https://github.com/skhadem/3D-BoundingBox
 """
 
 
-import torch
+import torch as th
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from top.model.backbone import resnet_fpn_backbone
-from top.run.loss_util import *
+from top.model.loss_util import *
 
 
-def OrientationLoss(orient_batch, orientGT_batch, confGT_batch):
 
-    batch_size = orient_batch.size()[0]
-    indexes = torch.max(confGT_batch, dim=1)[1]
-
-    # extract just the important bin
-    orientGT_batch = orientGT_batch[torch.arange(batch_size), indexes]
-    orient_batch = orient_batch[torch.arange(batch_size), indexes]
-
-    theta_diff = torch.atan2(orientGT_batch[:,1], orientGT_batch[:,0])
-    estimated_theta_diff = torch.atan2(orient_batch[:,1], orient_batch[:,0])
-
-    return -1 * torch.cos(theta_diff - estimated_theta_diff).mean()
-
-
-class Model(nn.Module):
-    def __init__(self, features=None, bins=2, w = 0.4):
-        super(Model, self).__init__()
+class BoundingBoxRegressionModel(nn.Module):
+    def __init__(self, features:th.nn.Module=None, bins=2, w = 0.4):
+        super(BoundingBoxRegressionModel, self).__init__()
         self.bins = bins
         self.w = w
         self.features = features
@@ -46,16 +34,6 @@ class Model(nn.Module):
                     nn.Dropout(),
                     nn.Linear(256, bins),
                     nn.Softmax()
-                )
-
-        self.translation = nn.Sequential(
-                    nn.Linear(512 * 7 * 7, 512),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(512, 512),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(512, 3)
                 )
 
         self.orientation = nn.Sequential(
@@ -82,13 +60,13 @@ class Model(nn.Module):
         x = self.features(x) # 512 x 7 x 7
         x = x.view(-1, 512 * 7 * 7)
         confidence = self.confidence(x)
-        translation = self.translation(x)
         scale = self.scale(x)
-        orientation = self.orientation(x)
-        orientation = orientation.view(-1, self.bins, 2)
-        orientation = F.normalize(orientation, dim=2)
+        # valid cos and sin values are obtained by applying an L2 norm.
+        tri_orientation = self.orientation(x)
+        tri_orientation = tri_orientation.view(-1, self.bins, 2)
+        tri_orientation = F.normalize(tri_orientation, dim=2)
 
-        return confidence, translation, scale, orientation
+        return confidence, scale, tri_orientation
 
 
 def train():
@@ -111,13 +89,12 @@ def train():
     generator = data.DataLoader(dataset, **params)
 
     backnone = resnet_fpn_backbone()
-    model = Model(features=backnone.features).cuda()
-    optim = torch.optim.Adam(model.parameters(), lr=0.0001, momentum=0.9)
+    model = BoundingBoxRegressionModel(features=backnone.features).cuda()
+    optim = th.optim.Adam(model.parameters(), lr=0.0001, momentum=0.9)
 
     conf_loss_func = nn.CrossEntropyLoss().cuda()
-    translation_loss_func = nn.MSELoss().cuda()
     scale_loss_func = nn.MSELoss().cuda()
-    orient_loss_func = OrientationLoss
+    orient_loss_func = orientation_loss
 
     total_num_batches = int(len(dataset) / batch_size)
 
@@ -134,15 +111,14 @@ def train():
             local_batch=local_batch.float().cuda()
             [orient, conf, dim] = model(local_batch)
 
-            translation_loss = translation_loss_func(dim, truth_dim)
-            scale_loss = translation_loss_func(dim, truth_dim)
+            scale_loss = scale_loss_func(dim, truth_dim)
             orient_loss = orient_loss_func(orient, truth_orient, truth_conf)
 
-            truth_conf = torch.max(truth_conf, dim=1)[1]
+            truth_conf = th.max(truth_conf, dim=1)[1]
             conf_loss = conf_loss_func(conf, truth_conf)
 
             loss_theta = conf_loss + w * orient_loss
-            loss = alpha * translation_loss + loss_theta
+            loss = alpha * scale_loss + loss_theta
 
             optim.zero_grad()
             loss.backward()
@@ -161,7 +137,7 @@ def train():
             print("====================")
             print ("Done with epoch %s!" % epoch)
             print ("Saving weights as %s ..." % name)
-            torch.save({
+            th.save({
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optim.state_dict(),
