@@ -25,10 +25,12 @@ class KeypointNetwork2D(nn.Module):
         backbone_name: str = 'resnet50'
         num_trainable_layers: int = 0
         # keypoint: KeypointLayer2D.Settings = KeypointLayer2D.Settings()
-        returned_layers: Tuple[int] = (4,)
+        returned_layers: Tuple[int, ...] = (4,)
         upsample: ConvUpsample.Settings = ConvUpsample.Settings()
         displacement: DisplacementLayer2D.Settings = DisplacementLayer2D.Settings()
         heatmap: HeatmapLayer2D.Settings = HeatmapLayer2D.Settings()
+        # NOTE(ycho): upsample_steps < 5 results in downsampling.
+        upsample_steps: Tuple[int, ...] = (128, 64, 16)
 
     def __init__(self, opts: Settings):
         super().__init__()
@@ -40,20 +42,19 @@ class KeypointNetwork2D(nn.Module):
             trainable_layers=opts.num_trainable_layers,
             returned_layers=opts.returned_layers)
 
-        # NOTE(ycho): Hardcoded number of channels
-        # FIXME(ycho): MAYBE, just maybe, it's a lot more
-        # sane of an option to predict on a lower-resolution grid.
-        self.upsample = nn.Sequential(
-            ConvUpsample(opts.upsample, 256, 128),
-            ConvUpsample(opts.upsample, 128, 64),
-            ConvUpsample(opts.upsample, 64, 32),
-            ConvUpsample(opts.upsample, 32, 16),
-            ConvUpsample(opts.upsample, 16, 16),
-        )
+        upsample_layers = []
+        # NOTE(ycho): hardcoded channel size from
+        # known value based on current backbone.
+        c_in = 256
+        for c_out in self.opts.upsample_steps:
+            upsample_layers.append(ConvUpsample(opts.upsample, c_in, c_out))
+            c_in = c_out
 
-        self.heatmap = HeatmapLayer2D(opts.heatmap, c_in=16)
+        self.upsample = nn.Sequential(*upsample_layers)
+
+        self.heatmap = HeatmapLayer2D(opts.heatmap, c_in=c_in)
         # self.keypoint = KeypointLayer2D(opts.keypoint, c_in=16)
-        self.displacement = DisplacementLayer2D(opts.displacement, c_in=16)
+        self.displacement = DisplacementLayer2D(opts.displacement, c_in=c_in)
 
     def forward(self, inputs):
         x = inputs
@@ -61,7 +62,7 @@ class KeypointNetwork2D(nn.Module):
         # FIXME(ycho): hardcoded feature layer
         x = self.backbone(x)['0']
 
-        # Upsample 32x
+        # Upsample ...
         x = self.upsample(x)
 
         # Final outputs ...
