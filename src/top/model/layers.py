@@ -7,6 +7,9 @@ from typing import Tuple, Dict
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
+from kornia.geometry.subpix.dsnt import (
+    spatial_expectation2d, spatial_softmax2d
+)
 
 
 class ConvUpsample(nn.Module):
@@ -170,3 +173,28 @@ class KeypointLayer3D(nn.Module):
         hm = th.sigmoid(self.conv_hm(inputs))
         # depth ...
         depth = 1.0 / th.sigmoid(self.conv_invd(inputs) + 1e-6) - 1.0
+
+
+class DsntLayer2D(nn.Module):
+    """
+    Dense Heatmap -> sparse keypoint locations.
+
+    @see kornia.geometry.subpix.dsnt.spatial_expectation2d
+    """
+
+    @dataclass
+    class Settings(Serializable):
+        temperature: float = 1.0
+
+    def __init__(self, opts: Settings):
+        self.opts = opts
+        self.temperature = th.as_tensor(self.opts.temperature)
+        super().__init__()
+
+    def forward(self, inputs: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
+        """ NCHW -> NC2 """
+        # Convert logits to probabilities.
+        # TODO(ycho): Consider if this is preferable to elementwise sigmoid.
+        prob = spatial_softmax2d(inputs, temperature=self.temperature)
+        kpts = spatial_expectation2d(prob, normalized_coordinates=True)
+        return (prob, kpts)
