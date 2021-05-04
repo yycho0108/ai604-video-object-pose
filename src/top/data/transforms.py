@@ -78,6 +78,8 @@ class DenseMapsMobilePose:
         # NOTE: in_place still results in a shallow copy.
         in_place: bool = True
         num_class: int = 9  # bikes, books, etc.
+        # [h,w] -> [h//d,w//d]. Note that kernel_size is unaffected.
+        downsample: int = 4
 
     def __init__(self, opts: Settings, device: th.device):
         self.opts = opts
@@ -98,7 +100,8 @@ class DenseMapsMobilePose:
             opts.kernel_size,
             device=device) - opts.kernel_size // 2
         delta = th.exp_(-th.square_(delta) / (2.0 * opts.sigma**2))
-        delta /= delta.sum()
+        # delta /= delta.sum()
+        delta /= delta.max()
         out = delta[None, :] * delta[:, None]
         return out
 
@@ -158,9 +161,12 @@ class DenseMapsMobilePose:
         class_index = inputs[Schema.CLASS]
         keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]  # (O, 9, 2|3)
 
-        # NOTE(ycho): If we want to compute downscaled heatmaps,
-        # this is probably the place we need to change.
         h, w = image.shape[-2:]
+
+        # NOTE(ycho): Apply downsampling relative to original shape.
+        h = h // self.opts.downsample
+        w = w // self.opts.downsample
+
         keypoints_2d = th.as_tensor(
             keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
 
@@ -171,9 +177,7 @@ class DenseMapsMobilePose:
         n = int(num_inst)
 
         # HEATMAPS for PER_OBJECT CENTERS
-        # TODO(ycho): REALLY feels like the output should not be full scale.
-        shape = list(image.shape)
-        shape[-3] = self.opts.num_class
+        shape = list(image.shape[:-3]) + [self.opts.num_class, h, w]
         heatmap = th.zeros(shape, dtype=th.float32, device=self.device)
 
         # NOTE(ycho): number of distinct keypoint classes,
