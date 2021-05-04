@@ -77,7 +77,7 @@ class Objectron(th.utils.data.IterableDataset):
     @dataclass
     class Settings(Serializable):
         bucket_name: str = 'objectron'
-        classes: Tuple[str] = (
+        classes: Tuple[str, ...] = (
             'bike',
             'book',
             'bottle',
@@ -90,9 +90,9 @@ class Objectron(th.utils.data.IterableDataset):
         train: bool = True
         shuffle: bool = True
         # NOTE(ycho): Refer to objectron/schema/features.py
-        context: List[str] = ('count', 'sequence_id')
+        context: Tuple[str, ...] = ('count', 'sequence_id')
         # NOTE(ycho): Refer to objectron/schema/features.py
-        features: List[str] = (
+        features: Tuple[str, ...] = (
             'instance_num',
             'image/width',
             'image/height',

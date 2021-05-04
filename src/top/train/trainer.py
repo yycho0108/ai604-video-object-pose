@@ -8,9 +8,11 @@ from pathlib import Path
 from simple_parsing import Serializable
 import torch as th
 import logging
+from tqdm.auto import tqdm
 
-from top.train.callback import Callbacks
 from top.train.saver import Saver
+from top.train.event.hub import Hub
+from top.train.event.topics import Topic
 
 
 class Trainer(object):
@@ -22,7 +24,6 @@ class Trainer(object):
     @dataclass
     class Settings(Serializable):
         train_steps: int = int(1e4)
-        eval_period: int = int(1e3)
         num_epochs: int = int(1)
 
     def __init__(self,
@@ -30,7 +31,7 @@ class Trainer(object):
                  model: th.nn.Module,
                  optimizer: th.optim.Optimizer,
                  loss_fn: Callable[[th.nn.Module, Any], th.Tensor],
-                 callbacks: Callbacks,
+                 hub: Hub,
                  loader: th.utils.data.DataLoader
                  ):
         """
@@ -39,7 +40,6 @@ class Trainer(object):
             model: The model to train.
             optimizer: Optimizer, e.g. `Adam`.
             loss_fn: The function that maps (model, next(iter(loader))) -> cost.
-            callbacks: Callbacks to invoke during the training run.
             loader: Iterable data loader.
         """
         self.opts = opts
@@ -56,7 +56,7 @@ class Trainer(object):
         #     return th.square(y_-y).mean()
 
         self.loss_fn = loss_fn
-        self.callbacks = callbacks
+        self.hub = hub
         self.loader = loader
 
     def _train(self):
@@ -65,23 +65,23 @@ class Trainer(object):
         """
         step = 0
         for epoch in range(self.opts.num_epochs):
-            # self.callbacks.on_epoch(epoch)
+            self.hub.publish(Topic.EPOCH, epoch)
             for i, data in enumerate(self.loader):
                 # Compute loss ...
                 # NOTE(ycho): if one of the callbacks require training loss,
                 # e.g. for logging, simply register a hook to the loss module
                 # rather than trying to extract them here.
                 loss = self.loss_fn(self.model, data)
-                print(loss)
+                self.hub.publish(Topic.TRAIN_LOSS, loss)
 
                 # Backprop + Optimize ...
                 self.optim.zero_grad()
                 loss.backward()
                 self.optim.step()
 
-                # Deal with callbacks ...
+                # Emit `step` event.
                 # == logging, saving, evaluation
-                self.callbacks.on_step(step)
+                self.hub.publish(Topic.STEP, step)
                 step += 1
 
                 if step >= self.opts.train_steps:
@@ -91,7 +91,7 @@ class Trainer(object):
         self.model.train()
 
         # TODO(ycho): Consider registering more hooks.
-        #self.callbacks.on_train(train)
+        self.hub.publish(Topic.TRAIN_BEGIN)
         try:
             self._train()
         except KeyboardInterrupt:
@@ -126,7 +126,7 @@ def main():
         model,
         optim,
         loss_fn,
-        Callbacks(),
+        Hub(),
         get_loader())
 
     trainer.train()
