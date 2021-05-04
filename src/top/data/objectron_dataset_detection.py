@@ -104,6 +104,7 @@ class Objectron(th.utils.data.IterableDataset):
             'object/scale',
             'POINT_3D',
             'POINT_NUM',
+            'camera/intrinsics',
         )
         cache_dir = '~/.cache/ai604/'
 
