@@ -20,3 +20,4 @@ class Schema(Enum):
     HEATMAP = "object/heatmap"
     HEATMAP_LOGITS = "object/heatmap_logits"
     DISPLACEMENT_MAP = "displacement_map"
+    KEYPOINT_NUM = "POINT_NUM"

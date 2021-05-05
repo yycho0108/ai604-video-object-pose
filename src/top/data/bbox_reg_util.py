@@ -5,10 +5,15 @@ Reference:
 """
 
 
+from dataclasses import dataclass
+from typing import Tuple
 import numpy as np
 import os
 import json
-from PIL import Image
+from simple_parsing.helpers.serialization.serializable import Serializable
+
+import torch as th
+import cv2
 
 from top.data.schema import Schema
 from top.run.box_generator import Box
@@ -75,25 +80,38 @@ class ClassAverages:
 class CropObject(object):
     """
     Crop object from image.
-    project 3D point to 2D -> 2D box(min/max) -> crop
+    2D keypoint -> 2D box(min/max) -> crop
     """
 
-    def _proj_2d_box(self, orientation, translation, scale):
-        """Project 3D bouning box to 2D.(min/max of vertices)"""
-        bbox_3d = Box.from_transformation(orientation, translation, scale)
-        vertices = bbox_3d._vertices
-        x_min, y_min, _ = np.min(vertices, axis=0)
-        x_max, y_max, _ = np.max(vertices, axis=0)
-        return x_min, x_max, y_min, y_max
+    @dataclass
+    class Settings(Serializable):
+        crop_img_size: Tuple[int, int, int] = (3, 224, 224)
+
+    def __init__(self, opts: Settings):
+        self.opts = opts
 
     def __call__(self, inputs: dict):
         # Parse inputs
-        image = inputs[Schema.IMAGE] # (C,H,W)
+        image = inputs[Schema.IMAGE]
         class_index = inputs[Schema.CLASS]
+        num_object = inputs[Schema.INSTANCE_NUM]
+        num_keypoints = inputs[Schema.KEYPOINT_NUM]
         translation = inputs[Schema.TRANSLATION]
         orientation = inputs[Schema.ORIENTATION]
         scale = inputs[Schema.SCALE]
-        x_min, x_max, y_min, y_max = self._proj_2d_box(orientation, translation, scale)
-        croped_img = image.crop
 
-        return
+        h, w = image.shape[-2:]
+        keypoints_2d = np.split(th.as_tensor(inputs[Schema.KEYPOINT_2D]), np.array(np.cumsum(num_keypoints)))
+        keypoints_2d = [points.reshape(-1,3) for points in keypoints_2d]
+        keypoints_2d = [np.multiply(keypoint, np.array([w, h, 1.0], np.float32)).astype(int)
+                        for keypoint in keypoints_2d]
+        
+        crop_img = []
+        for object_id in range(num_object):
+            x_min, y_min, _ = np.min(keypoints_2d[object_id], axis=0)
+            x_max, y_max, _ = np.max(keypoints_2d[object_id], axis=0)
+            crop_tmp = image[:, x_min:x_max, y_min:y_max].copy()
+            crop_tmp = cv2.resize(crop_tmp, dsize=self.opts.crop_img_size)
+            crop_img.append(crop_tmp)
+
+        return crop_img, class_index, translation, orientation, scale
