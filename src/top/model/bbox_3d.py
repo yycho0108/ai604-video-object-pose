@@ -12,6 +12,8 @@ from top.model.loss_util import *
 from top.data.schema import Schema
 
 
+# TODO(Jiyong): compare various method to regress orientation,
+# such as quaternions, rotation vector, euler anger, multibin, etc
 class BoundingBoxRegressionModel(nn.Module):
     """
     regress parameters for projection from 2D to 3D bounding box 
@@ -26,6 +28,7 @@ class BoundingBoxRegressionModel(nn.Module):
         w: float = 0.4
 
     def __init__(self, opts: Settings):
+        
         super(BoundingBoxRegressionModel, self).__init__()
         self.opts = opts
 
@@ -34,27 +37,29 @@ class BoundingBoxRegressionModel(nn.Module):
                                             trainable_layers=opts.num_trainable_layers,
                                             returned_layers=opts.returned_layers)
 
-        # FIXME(Jiyong): hardcode for input size
-        self.confidence = nn.Sequential(
-                    nn.Linear(512 * 7 * 7, 256),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(256, 256),
-                    nn.ReLU(True),
-                    nn.Dropout(),
-                    nn.Linear(256, opts.num_bins),
-                    nn.Softmax()
-                )
+        # # NOTE(Jiyong): This module is used for Multibin regression
+        # # FIXME(Jiyong): hardcode for input size
+        # self.confidence = nn.Sequential(
+        #             nn.Linear(512 * 7 * 7, 256),
+        #             nn.ReLU(True),
+        #             nn.Dropout(),
+        #             nn.Linear(256, 256),
+        #             nn.ReLU(True),
+        #             nn.Dropout(),
+        #             nn.Linear(256, opts.num_bins),
+        #             nn.Softmax()
+        #         )
 
+        # NOTE(Jiyong): This module is used for regressing quaternions
         # FIXME(Jiyong): hardcode for input size
-        self.orientation = nn.Sequential(
+        self.quaternions = nn.Sequential(
                     nn.Linear(512 * 7 * 7, 256),
                     nn.ReLU(True),
                     nn.Dropout(),
                     nn.Linear(256, 256),
                     nn.ReLU(True),
                     nn.Dropout(),
-                    nn.Linear(256, opts.num_bins*2) # to get sin and cos
+                    nn.Linear(256, 4)
                 )
 
         # FIXME(Jiyong): hardcode for input size
@@ -71,11 +76,14 @@ class BoundingBoxRegressionModel(nn.Module):
     def forward(self, x):
         x = self.features(x) # 512 x 7 x 7
         x = x.view(-1, 512 * 7 * 7)
-        confidence = self.confidence(x)
+        # confidence = self.confidence(x)
         dimension = self.dimension(x)
-        # valid cos and sin values are obtained by applying an L2 norm.
-        tri_orientation = self.orientation(x)
-        tri_orientation = tri_orientation.view(-1, self.bins, 2)
-        tri_orientation = F.normalize(tri_orientation, dim=2)
+        quaternions = self.quaternions(x)
 
-        return confidence, dimension, tri_orientation
+        # # NOTE(Jiyong): for multibin
+        # # valid cos and sin values are obtained by applying an L2 norm.
+        # tri_orientation = self.orientation(x)
+        # tri_orientation = tri_orientation.view(-1, self.bins, 2)
+        # tri_orientation = F.normalize(tri_orientation, dim=2)
+
+        return dimension, quaternions
