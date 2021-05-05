@@ -53,7 +53,8 @@ class BoundingBoxRegressionModel(nn.Module):
         # NOTE(Jiyong): This module is used for regressing quaternions
         # FIXME(Jiyong): hardcode for input size
         self.quaternions = nn.Sequential(
-                    nn.Linear(512 * 7 * 7, 256),
+                    nn.Flatten(),
+                    nn.Linear(256 * 7 * 7, 256),
                     nn.ReLU(True),
                     nn.Dropout(),
                     nn.Linear(256, 256),
@@ -64,21 +65,22 @@ class BoundingBoxRegressionModel(nn.Module):
 
         # FIXME(Jiyong): hardcode for input size
         self.dimension = nn.Sequential(
-                    nn.Linear(512 * 7 * 7, 512),
+                    nn.Flatten(),
+                    nn.Linear(256 * 7 * 7, 256),
                     nn.ReLU(True),
                     nn.Dropout(),
-                    nn.Linear(512, 512),
+                    nn.Linear(256, 256),
                     nn.ReLU(True),
                     nn.Dropout(),
-                    nn.Linear(512, 3)
+                    nn.Linear(256, 3)
                 )
 
     def forward(self, x):
-        x = self.features(x) # 512 x 7 x 7
-        x = x.view(-1, 512 * 7 * 7)
+        # FIXME(Jiyong): hardcoded feature layer
+        x = self.features(x)['0']
         # confidence = self.confidence(x)
-        dimension = self.dimension(x)
-        quaternions = self.quaternions(x)
+        dimension = th.squeeze(self.dimension(x))
+        quaternions = th.squeeze(self.quaternions(x))
 
         # # NOTE(Jiyong): for multibin
         # # valid cos and sin values are obtained by applying an L2 norm.

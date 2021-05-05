@@ -10,6 +10,7 @@ class Schema(Enum):
     """
     IMAGE = "image"
     KEYPOINT_2D = "point_2d"
+    KEYPOINT_3D = "point_3d"
     INSTANCE_NUM = "instance_num"
     TRANSLATION = "object/translation"
     ORIENTATION = "object/orientation"
@@ -20,4 +21,4 @@ class Schema(Enum):
     HEATMAP = "object/heatmap"
     HEATMAP_LOGITS = "object/heatmap_logits"
     DISPLACEMENT_MAP = "displacement_map"
-    KEYPOINT_NUM = "POINT_NUM"
+    KEYPOINT_NUM = "point_num"

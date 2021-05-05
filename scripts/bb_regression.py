@@ -26,6 +26,7 @@ from top.model.loss_util import orientation_loss, generate_bins
 
 from top.data.objectron_dataset_detection import Objectron
 from top.data.schema import Schema
+from top.data.bbox_reg_util import CropObject, ClassAverages
 
 
 @dataclass
@@ -33,16 +34,18 @@ class AppSettings(Serializable):
     model: BoundingBoxRegressionModel.Settings = BoundingBoxRegressionModel.Settings()
     dataset: Objectron.Settings = Objectron.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
-    train: Trainer.Settings = Trainer.Settings()
-    batch_size: int = 8
-    alpha: float = 0.6
-    w: float = 0.4
-    device: str = ''
+    train: Trainer.Settings = Trainer.Settings(train_steps=1, eval_period=1)
+    # FIXME(Jiyong): need to padding for batch
+    batch_size: int = 1
+    alpha: float = 0.5
+    # w: float = 0.4
+    device: str = 'cpu'
 
 
 def load_data(opts: AppSettings, device: th.device):
-    # FIXME(Jiyong): data preprocessing for 3D bouning box regression
-    transform = None
+    # TODO(Jiyong): change data preprocessing for ClassAverage of dimesion.
+    # Currently, regress dimension directly(not residual)
+    transform = Compose([CropObject(CropObject.Settings())])
     data_opts = opts.dataset
     
     # For train data
@@ -55,7 +58,7 @@ def load_data(opts: AppSettings, device: th.device):
     train_loader = th.utils.data.DataLoader(train_dataset, batch_size=opts.batch_size)
     test_loader = th.utils.data.DataLoader(test_dataset, batch_size=opts.batch_size)
 
-    return train_dataset, test_dataset
+    return train_loader, test_loader
 
 def main():
 
@@ -71,36 +74,57 @@ def main():
 
     callbacks = Callbacks([])
 
-    conf_loss_func = nn.CrossEntropyLoss().to(device)
+    # NOTE(Jiyong): for MultiBin method
+    # conf_loss_func = nn.CrossEntropyLoss().to(device)
+    # orient_loss_func = orientation_loss
+    orientation_loss = nn.MSELoss().to(device)
     scale_loss_func = nn.MSELoss().to(device)
-    orient_loss_func = orientation_loss
+
 
     def loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
-        data = {k: v.to(device) for (k, v) in data.items()}
+        data = {k: v for (k, v) in data.items()}
 
-        image = data[Schema.IMAGE]
-        orient, conf, dim = model(image)
-        
-        # FIXME(Jiyong): modify to Objectron
-        truth_orient = data['Orientation'].float().to(device)
-        truth_conf = data['Confidence'].long().to(device)
-        truth_dim = data['scale'].float().to(device)
+        image = data['crop_img']
+        truth_orient = data[Schema.ORIENTATION]
+        truth_dim = data[Schema.SCALE]
+        # truth_conf = data['Confidence'].long().to(device)
 
-        scale_loss = scale_loss_func(dim, truth_dim)
-        orient_loss = orient_loss_func(orient, truth_orient, truth_conf)
+        # FIXME(Jiyong): parallelize by padding
+        num_obj = len(image)
+        loss = 0
+        for i in range(num_obj):
+            # TODO(Jiyong): need to fix error("ValueError: only one element tensors can be converted to Python scalars") for trying to(device) at above.
+            _image = image[i].to(device)
+            _truth_orient = th.squeeze(truth_orient[i]).to(device)
+            _truth_dim = th.squeeze(truth_dim[i]).to(device)
 
-        truth_conf = th.max(truth_conf, dim=1)[1]
-        conf_loss = conf_loss_func(conf, truth_conf)
+            dim, quat = model(_image)
 
-        loss_theta = conf_loss + opts.w * orient_loss
-        loss = opts.alpha * scale_loss + loss_theta
+            scale_loss = scale_loss_func(dim, _truth_dim)
+            orient_loss = orientation_loss(quat, _truth_orient)
 
-        return loss
+            # orient_loss = orientation_loss(orient, truth_orient, truth_conf)
+            # truth_conf = th.max(truth_conf, dim=1)[1]
+            # conf_loss = conf_loss_func(conf, truth_conf)
+            # loss_theta = conf_loss + opts.w * orient_loss
+            # loss = opts.alpha * scale_loss + loss_theta
 
-    trainer = Trainer(opts.train, model, optimizer, loss_fn, callbacks, train_loader)
+            loss += opts.alpha*scale_loss + orient_loss
 
+        return loss/num_obj
+
+    trainer = Trainer(opts.train,
+                      model,
+                      optimizer,
+                      loss_fn,
+                      callbacks,
+                      train_loader)
+
+    print('======Training Start======')
     trainer.train()
+    print('======Training End======')
+
 
 if __name__=='__main__':
     main()

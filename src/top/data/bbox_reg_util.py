@@ -14,6 +14,7 @@ from simple_parsing.helpers.serialization.serializable import Serializable
 
 import torch as th
 import cv2
+from scipy.spatial.transform import Rotation as R
 
 from top.data.schema import Schema
 from top.run.box_generator import Box
@@ -85,7 +86,7 @@ class CropObject(object):
 
     @dataclass
     class Settings(Serializable):
-        crop_img_size: Tuple[int, int, int] = (3, 224, 224)
+        crop_img_size: Tuple[int, int, int] = (224, 224)
 
     def __init__(self, opts: Settings):
         self.opts = opts
@@ -101,17 +102,51 @@ class CropObject(object):
         scale = inputs[Schema.SCALE]
 
         h, w = image.shape[-2:]
-        keypoints_2d = np.split(th.as_tensor(inputs[Schema.KEYPOINT_2D]), np.array(np.cumsum(num_keypoints)))
+        keypoints_2d = np.split(inputs[Schema.KEYPOINT_2D], np.array(np.cumsum(num_keypoints)))
         keypoints_2d = [points.reshape(-1,3) for points in keypoints_2d]
         keypoints_2d = [np.multiply(keypoint, np.array([w, h, 1.0], np.float32)).astype(int)
                         for keypoint in keypoints_2d]
         
+        orientation = np.split(orientation, num_object)
+        orientation = [rotation.reshape(3,3) for rotation in orientation]
+
+        scale = np.split(scale, num_object)
+        scale = [scales.reshape(-1,3) for scales in scale]
+
+        translation = np.split(translation, num_object)
+        translation = [translations.reshape(-1,3) for translations in translation]
+
         crop_img = []
-        for object_id in range(num_object):
+        quaternions = []
+        _scale = []
+        _translation = []
+        for object_id in range(num_object):       
+            # NOTE(Jiyong): np.split() leaves an empty array at the end of the list.
+            if keypoints_2d[object_id].size == 0:
+                break
+
             x_min, y_min, _ = np.min(keypoints_2d[object_id], axis=0)
             x_max, y_max, _ = np.max(keypoints_2d[object_id], axis=0)
-            crop_tmp = image[:, x_min:x_max, y_min:y_max].copy()
+
+            # NOTE(Jiyong): TypeError: Expected cv::UMat for argument 'src'
+            # -> cv2.Umat() is functionally equivalent to np.float32() & (H,W,C)
+            crop_tmp = np.float32(image[:, x_min:x_max, y_min:y_max])
+            crop_tmp = np.transpose(crop_tmp, (1,2,0))  
             crop_tmp = cv2.resize(crop_tmp, dsize=self.opts.crop_img_size)
+            crop_tmp = np.transpose(crop_tmp, (2,0,1))
             crop_img.append(crop_tmp)
 
-        return crop_img, class_index, translation, orientation, scale
+            # For quaternions regression
+            r = R.from_matrix(orientation[object_id])
+            quaternions.append(r.as_quat())
+
+            _scale.append(scale[object_id])
+            _translation.append(translation[object_id])
+
+        outputs = inputs.copy()
+        outputs['crop_img'] = crop_img
+        outputs[Schema.TRANSLATION] = _translation
+        outputs[Schema.SCALE] = _scale
+        outputs[Schema.ORIENTATION] = quaternions
+
+        return outputs
