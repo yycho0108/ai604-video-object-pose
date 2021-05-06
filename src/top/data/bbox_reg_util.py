@@ -130,9 +130,14 @@ class CropObject(object):
 
             # NOTE(Jiyong): TypeError: Expected cv::UMat for argument 'src'
             # -> cv2.Umat() is functionally equivalent to np.float32() & (H,W,C)
-            crop_tmp = np.float32(image[:, x_min:x_max, y_min:y_max])
-            crop_tmp = np.transpose(crop_tmp, (1,2,0))  
-            crop_tmp = cv2.resize(crop_tmp, dsize=self.opts.crop_img_size)
+            crop_tmp = np.float32(image[:, y_min:y_max, x_min:x_max])
+            crop_tmp = np.transpose(crop_tmp, (1,2,0))
+            try:
+                crop_tmp = cv2.resize(crop_tmp, dsize=self.opts.crop_img_size)
+            except Exception as e:
+                print(crop_tmp.shape)
+                raise
+
             crop_tmp = np.transpose(crop_tmp, (2,0,1))
             crop_img.append(crop_tmp)
 
@@ -144,7 +149,7 @@ class CropObject(object):
             _translation.append(translation[object_id])
 
         outputs = inputs.copy()
-        outputs['crop_img'] = crop_img
+        outputs['crop_img'] = np.stack(crop_img, axis=0)
         outputs[Schema.TRANSLATION] = _translation
         outputs[Schema.SCALE] = _scale
         outputs[Schema.ORIENTATION] = quaternions
