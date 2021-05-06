@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__all__ = ['Objectron']
+__all__ = ['ObjectronSequence']
 
 import os
 import sys
@@ -12,20 +12,18 @@ from typing import List, Tuple, Dict
 from PIL import Image
 import numpy as np
 import pickle
+from tqdm import tqdm
 
 # torch+torchvision
 import torch as th
+import torch.nn as nn
 import torchvision.io as thio
 from torchvision import transforms
 
+from tfrecord.reader import sequence_loader
 from google.cloud import storage
 
 from top.data.cached_dataset import CachedDataset
-from top.data.schema import Schema
-from top.run.app_util import update_settings
-
-
-NUM_KEYPOINTS = 9
 
 
 def _glob_objectron(bucket_name: str, prefix: str):
@@ -34,52 +32,15 @@ def _glob_objectron(bucket_name: str, prefix: str):
     return [blob.name for blob in blobs]
 
 
-def decode(example, feature_names: List[str] = []):
-    w = example['image/width'].item()
-    h = example['image/height'].item()
-    points = example['point_2d'].numpy()
-    num_instances = example['instance_num'].item()
-    num_keypoints = example['point_num'].numpy()
-    points = points.reshape(num_instances, NUM_KEYPOINTS, 3)
-
-    if False:
-        image_data = example['image/encoded'].numpy().tobytes()
-        image = Image.open(io.BytesIO(image_data))
-        image = np.asarray(image)
-        image = th.from_numpy(image.transpose(2, 0, 1))
-    else:
-        # NOTE(ycho): Loading directly with torch to avoid warnings with PIL.
-        # NOTE(ycho): The ONLY reason this works is because the original data was
-        # formatted in uint8 and implicitly cast to int8 in the reading
-        # process.
-        img_bytes = example['image/encoded'].to(dtype=th.uint8)
-        image = thio.decode_image(img_bytes)
-
-    out = {
-        Schema.IMAGE: image,
-        Schema.KEYPOINT_2D: points,
-        Schema.INSTANCE_NUM: num_instances,
-        Schema.TRANSLATION: example['object/translation'],
-        Schema.ORIENTATION: example['object/orientation'],
-        Schema.SCALE: example['object/scale'],
-        Schema.PROJECTION: example['camera/projection'],
-        Schema.KEYPOINT_NUM: num_keypoints,
-    }
-
-    out.update({k: example[k] for k in feature_names})
-    return out
-
-
-class Objectron(th.utils.data.IterableDataset):
+class ObjectronSequence(th.utils.data.IterableDataset):
     """
-    Objectron dataset.
-    TODO(ycho): Rename to `ObjectronDetection`.
+    Objectron dataset (currently configured for loading sequences only).
     """
 
     @dataclass
     class Settings(Serializable):
         bucket_name: str = 'objectron'
-        classes: Tuple[str, ...] = (
+        classes: Tuple[str] = (
             'bike',
             'book',
             'bottle',
@@ -92,9 +53,9 @@ class Objectron(th.utils.data.IterableDataset):
         train: bool = True
         shuffle: bool = True
         # NOTE(ycho): Refer to objectron/schema/features.py
-        context: Tuple[str, ...] = ('count', 'sequence_id')
+        context: List[str] = ('count', 'sequence_id')
         # NOTE(ycho): Refer to objectron/schema/features.py
-        features: Tuple[str, ...] = (
+        features: List[str] = (
             'instance_num',
             'image/width',
             'image/height',
@@ -104,10 +65,10 @@ class Objectron(th.utils.data.IterableDataset):
             'object/translation',
             'object/orientation',
             'object/scale',
-            'point_3d',
-            'point_2d',
-            'point_num',
             'camera/intrinsics',
+            'camera/extrinsics',
+            'camera/projection',
+            'camera/view',
         )
         cache_dir = '~/.cache/ai604/'
 
@@ -128,8 +89,7 @@ class Objectron(th.utils.data.IterableDataset):
     def _get_shards(self):
         """ return list of shards, potentially memoized for efficiency """
         prefix = 'train' if self.opts.train else 'test'
-        # FIXME(ycho): hardcoded {prefix}-det-shards
-        shards_cache = F'{self.opts.cache_dir}/{prefix}-det-shards.pkl'
+        shards_cache = F'{self.opts.cache_dir}/{prefix}-shards.pkl'
 
         shards_path = Path(shards_cache).expanduser()
         if not shards_path.exists():
@@ -151,19 +111,27 @@ class Objectron(th.utils.data.IterableDataset):
 
         # Aggregate class shards
         for cls in self.opts.classes:
-            prefix = F'v1/records_shuffled/{cls}/{cls}_{train_type}'
+            prefix = F'v1/sequences/{cls}/{cls}_{train_type}'
             cls_shards = _glob_objectron(self.opts.bucket_name, prefix)
             shards.extend(cls_shards)
         return shards
 
     def __iter__(self):
-
-        # NOTE(ycho): FOR NOW, I moved this import inside __iter__
-        # To prevent very sad side-effects from torch_xla.
-        import torch_xla.utils.tf_record_reader as tfrr
+        # Deal with parallelism...
+        # NOTE(ycho): harder to assume uncorrelated inputs
+        # without multiple workers loading from different shards
+        # on a single batch.
+        worker_info = th.utils.data.get_worker_info()
+        if worker_info is None:
+            i0 = 0
+            i1 = len(self.shards)
+        else:
+            n = int(np.ceil(len(self.shards) / float(worker_info.num_workers)))
+            i0 = worker_info.id * n
+            i1 = min(len(self.shards), i0 + n)
 
         # Contiguous block slice among shards
-        for shard in self.shards:
+        for shard in self.shards[i0:i1]:
             # Resolve shard name relative to bucket.
             shard_name = F'gs://{self.opts.bucket_name}/{shard}'
 
@@ -172,25 +140,37 @@ class Objectron(th.utils.data.IterableDataset):
             class_name = shard.split('/')[-2]
             class_index = self._index_from_class(class_name)
 
-            r = tfrr.TfRecordReader(
-                shard_name, compression='', transforms=None)
-            while True:
-                example = r.read_example()
-                if not example:
-                    break
+            # NOTE(ycho): tfrr doesn't work due to
+            # GCS + SequenceExample. Therefore, we use
+            # a custom fork of `tfrecord` package.
+            # TODO(ycho): Protection on network error cases
+            # Which will inevitably arise during long training
+            reader = sequence_loader(
+                shard_name, None, self.opts.context,
+                self.opts.features, None)
 
-                # If you need other features, then append the features to
-                # feature_names
-                feature_names = []
-                features = decode(example, feature_names=feature_names)
-                features['class_name'] = class_name
-                features[Schema.CLASS] = th.full(
-                    (int(features[Schema.INSTANCE_NUM]),), class_index)
+            # Wonder how many samples there are per-shard??
+            for i, (context, features) in enumerate(reader):
+                # Replace object/name to object/class here.
+                names = features.pop('object/name')
 
-            output = features
-            if self.xfm:
-                output = self.xfm(output)
-            yield output
+                # NOTE(ycho): Instead of trying to parse bytes->str->index,
+                # Just rewrite object class with the known class index.
+                # TODO(ycho): Watch out for heterogeneous frames, if any.
+                # FIXME(ycho): ^^ quite likely?
+                classes = th.as_tensor(
+                    [class_index for c in names],
+                    dtype=th.int32)
+                features['object/class'] = classes
+
+                out = (context, features)
+
+                # Apply optional transform on the data.
+                # NOTE(ycho): This step is mandatory if we'd like to convert the dataset
+                # to fixed-length representation.
+                if self.xfm is not None:
+                    out = self.xfm(out)
+                yield out
 
 
 class SampleObjectron(th.utils.data.IterableDataset):
@@ -204,17 +184,16 @@ class SampleObjectron(th.utils.data.IterableDataset):
     @dataclass
     class Settings(Serializable):
         cache: CachedDataset.Settings = CachedDataset.Settings()
-        objectron: Objectron.Settings = Objectron.Settings()
+        objectron: ObjectronSequence.Settings = ObjectronSequence.Settings()
 
     def __init__(self, opts: Settings, transform=None):
         self.opts = opts
         # NOTE(ycho): delegate most of the heavy lifting
         # to `CachedDataset`.
         prefix = 'train' if self.opts.objectron.train else 'test'
-        # FIXME(ycho): hardcoded {prefix}-det-sample
         self.dataset = CachedDataset(opts.cache,
-                                     lambda: Objectron(self.opts.objectron),
-                                     F'{prefix}-det-sample',
+                                     lambda: ObjectronSequence(self.opts.objectron),
+                                     F'{prefix}-sample',
                                      transform=transform)
         self.xfm = transform
 
@@ -222,16 +201,25 @@ class SampleObjectron(th.utils.data.IterableDataset):
         return self.dataset.__iter__()
 
 
+def _skip_none(batch):
+    """ Wrapper around default_collate() for skipping `None`. """
+    batch = [x for x in batch if (x is not None)]
+    return th.utils.data.dataloader.default_collate(batch)
+
+
 def main():
     opts = SampleObjectron.Settings()
-    opts = update_settings(opts)
-    dataset = SampleObjectron(opts)
+    xfm = transforms.Compose([
+        DecodeImage(size=(480, 640)),
+        ParseFixedLength(ParseFixedLength.Settings()),
+    ])
+    dataset = SampleObjectron(opts, xfm)
     loader = th.utils.data.DataLoader(
-        dataset, batch_size=1, num_workers=0,
-        collate_fn=None)
+        dataset, batch_size=2, num_workers=0,
+        collate_fn=_skip_none)
 
     for data in loader:
-        print(data['points'])
+        # print(data)
         break
 
 

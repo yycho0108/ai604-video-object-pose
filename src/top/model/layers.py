@@ -65,8 +65,8 @@ class DisplacementLayer2D(nn.Module):
     @dataclass
     class Settings(Serializable):
         hidden: Tuple[int] = ()
-        # NOTE(ycho): 8 vertices by default, excluding centroid.
-        num_keypoints: int = 8
+        # NOTE(ycho): 9 vertices by default, including centroid.
+        num_keypoints: int = 9
 
     def __init__(self, opts: Settings, c_in: int):
         super().__init__()

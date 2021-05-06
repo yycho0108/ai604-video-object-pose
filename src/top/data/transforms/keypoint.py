@@ -1,61 +1,21 @@
 #!/usr/bin/env python3
+"""
+Set of transforms related to keypoints.
+"""
+
+__all__ = ['DenseMapsMobilePose', 'BoxHeatmap']
 
 import itertools
 from dataclasses import dataclass
 from simple_parsing import Serializable
-from typing import Union, Tuple
+from typing import Union, Tuple, Dict, Hashable
 
 import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torchvision.utils import save_image
-from torchvision import transforms
-from torchvision.transforms import Compose
-from pytorch3d.transforms.transform3d import Transform3d
-
-from top.run.torch_util import resolve_device
-from top.run.app_util import update_settings
 from top.data.schema import Schema
-
-
-class DrawKeypoints:
-    """
-    Draw keypoints (as inputs['points']) on an image as-is.
-    Mostly intended for debugging.
-    """
-
-    @dataclass
-    class Settings(Serializable):
-        kernel_size: int = 5
-
-    def __init__(self, opts: Settings):
-        self.opts = opts
-
-    def __call__(self, inputs):
-        outputs = inputs
-        image = inputs[Schema.IMAGE]
-
-        # Points in UV-coordinates
-        # consistent with the objectron format.
-        h, w = image.shape[-2:]
-        points_uv = th.as_tensor(inputs[Schema.KEYPOINT_2D])
-
-        # NOTE(ycho): The Objectron dataset flipped their convention
-        # so that the point is ordered in a minor-major axis order.
-        points = points_uv * th.as_tensor([w, h, 1.0])
-        out = th.zeros_like(inputs[Schema.IMAGE])
-        num_inst = inputs[Schema.INSTANCE_NUM]
-        n = int(num_inst)
-
-        r = self.opts.kernel_size // 2
-        for i in range(n):
-            for x, y, _ in points[i]:
-                i0, i1 = int(y), int(x)
-                out[..., i0 - r: i0 + r, i1 - r:i1 + r] = 255
-        outputs['rendered_keypoints'] = out
-        return outputs
 
 
 class DenseMapsMobilePose:
@@ -183,8 +143,7 @@ class DenseMapsMobilePose:
 
         # NOTE(ycho): number of distinct keypoint classes,
         # 2X to account for offsets in {+i,+j} directions,
-        # -1 to ignore the centroid point (OR INCLUDE??)
-        num_vertices = keypoints_2d.shape[-2] - 1
+        num_vertices = keypoints_2d.shape[-2]
         shape[-3] = 2 * num_vertices
 
         # FIXME(ycho): OK-ish to initialize as ones since normalized?
@@ -230,7 +189,7 @@ class DenseMapsMobilePose:
                 roi[...] = roi.maximum(ker)
 
             # Process vertices ...
-            vertices = keypoints_2d[i_obj, 1:, :2]
+            vertices = keypoints_2d[i_obj, :, :2]
             for i, (x, y) in enumerate(vertices):
                 i0, i1 = int(y), int(x)
                 i_roi, i_off = self._compute_adjusted_roi(i1, i0, h, w, r)
@@ -284,10 +243,10 @@ class BoxHeatmap:
     def __call__(self, inputs):
         # Parse inputs.
         h, w = inputs[Schema.IMAGE].shape[-2:]
-        R = inputs[Schema.ORIENTATION]
-        T = inputs[Schema.TRANSLATION]
-        S = inputs[Schema.SCALE]
-        P = inputs[Schema.PROJECTION]
+        R = th.as_tensor(inputs[Schema.ORIENTATION])
+        T = th.as_tensor(inputs[Schema.TRANSLATION])
+        S = th.as_tensor(inputs[Schema.SCALE])
+        P = th.as_tensor(inputs[Schema.PROJECTION])
         num_inst = inputs[Schema.INSTANCE_NUM]
 
         heatmaps = []
@@ -298,9 +257,8 @@ class BoxHeatmap:
             itxn = T[i * 3:(i + 1) * 3]
             iscale = S[i * 3:(i + 1) * 3]
 
-            # T_scale = np.diag(np.r_[iscale.cpu().numpy(), 1.0])
-            T_scale = Transform3d().scale(
-                iscale.reshape(1, 3)).get_matrix()[0].float()
+            T_scale = th.eye(4)
+            T_scale[(0, 1, 2), (0, 1, 2)] = iscale.reshape(3)
 
             # BBOX3D transform
             T_box = th.eye(4)
@@ -342,78 +300,3 @@ class BoxHeatmap:
         heatmaps = th.stack(heatmaps, dim=0)  # CHW, where C == num instances
         inputs[Schema.KEYPOINT_MAP] = heatmaps
         return inputs
-
-
-class Normalize:
-    """
-    Lightweight wrapper around torchvision.transforms.Normalize
-    to reason with dictionary-valued inputs.
-
-    NOTE(ycho): Expects image in UINT8 form.
-    """
-
-    @dataclass
-    class Settings(Serializable):
-        mean: float = 0.5
-        std: float = 0.25
-        in_place: bool = True
-
-    def __init__(self, opts: Settings):
-        self.opts = opts
-        self.xfm = transforms.Normalize(opts.mean, opts.std)
-
-    def __call__(self, inputs: dict):
-        if not self.opts.in_place:
-            outputs = inputs.copy()
-        else:
-            outputs = inputs
-
-        # NOTE(ycho): uint8 --> float32
-        image = outputs[Schema.IMAGE].to(th.float32) / 255.0
-        outputs[Schema.IMAGE] = self.xfm(image)
-
-        return outputs
-
-
-def main():
-    from top.data.objectron_dataset_detection import Objectron, SampleObjectron
-    from top.data.colored_cube_dataset import ColoredCubeDataset
-
-    # dataset_cls = ColoredCubeDataset
-    dataset_cls = SampleObjectron
-
-    opts = dataset_cls.Settings()
-    opts = update_settings(opts)
-    device = resolve_device('cpu:0')
-
-    xfm = Compose([BoxHeatmap(device=device),
-                   DrawKeypoints(DrawKeypoints.Settings()),
-                   DenseMapsMobilePose(DenseMapsMobilePose.Settings(), device)
-                   ])
-
-    if dataset_cls is SampleObjectron:
-        dataset = dataset_cls(opts, transform=xfm)
-    else:
-        dataset = dataset_cls(opts, device, transform=xfm)
-
-    for data in dataset:
-        save_image(data[Schema.IMAGE] / 255.0, F'/tmp/img.png')
-        # save_image(data['rendered_keypoints'] / 255.0, F'/tmp/rkpts.png')
-
-        for i, img in enumerate(data[Schema.KEYPOINT_MAP]):
-            save_image(img / 255.0, F'/tmp/kpt-{i}.png')
-
-        for i, img in enumerate(data[Schema.HEATMAP]):
-            save_image(img, F'/tmp/heatmap-{i}.png',
-                       normalize=True)
-
-        for i, img in enumerate(data[Schema.DISPLACEMENT_MAP]):
-            save_image(
-                th.where(th.isfinite(img), img.abs(), th.as_tensor(0.0)),
-                F'/tmp/displacement-{i}.png',
-                normalize=True)
-        break
-
-
-if __name__ == '__main__':
-    main()

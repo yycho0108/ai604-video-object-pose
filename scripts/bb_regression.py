@@ -24,7 +24,7 @@ from top.run.torch_util import resolve_device
 from top.model.bbox_3d import BoundingBoxRegressionModel
 from top.model.loss_util import orientation_loss, generate_bins
 
-from top.data.objectron_dataset_detection import Objectron
+from top.data.objectron_detection import Objectron
 from top.data.schema import Schema
 from top.data.bbox_reg_util import CropObject, ClassAverages
 
@@ -47,7 +47,7 @@ def load_data(opts: AppSettings, device: th.device):
     # Currently, regress dimension directly(not residual)
     transform = Compose([CropObject(CropObject.Settings())])
     data_opts = opts.dataset
-    
+
     # For train data
     data_opts = replace(data_opts, train=True)
     train_dataset = Objectron(data_opts, transform)
@@ -55,10 +55,13 @@ def load_data(opts: AppSettings, device: th.device):
     data_opts = replace(data_opts, train=False)
     test_dataset = Objectron(data_opts, transform)
 
-    train_loader = th.utils.data.DataLoader(train_dataset, batch_size=opts.batch_size)
-    test_loader = th.utils.data.DataLoader(test_dataset, batch_size=opts.batch_size)
+    train_loader = th.utils.data.DataLoader(
+        train_dataset, batch_size=opts.batch_size)
+    test_loader = th.utils.data.DataLoader(
+        test_dataset, batch_size=opts.batch_size)
 
     return train_loader, test_loader
+
 
 def main():
 
@@ -80,7 +83,6 @@ def main():
     orientation_loss = nn.MSELoss().to(device)
     scale_loss_func = nn.MSELoss().to(device)
 
-
     def loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
         data = {k: v for (k, v) in data.items()}
@@ -94,7 +96,9 @@ def main():
         num_obj = len(image)
         loss = 0
         for i in range(num_obj):
-            # TODO(Jiyong): need to fix error("ValueError: only one element tensors can be converted to Python scalars") for trying to(device) at above.
+            # TODO(Jiyong): need to fix error("ValueError: only one element
+            # tensors can be converted to Python scalars") for trying
+            # to(device) at above.
             _image = image[i].to(device)
             _truth_orient = th.squeeze(truth_orient[i]).to(device)
             _truth_dim = th.squeeze(truth_dim[i]).to(device)
@@ -110,9 +114,9 @@ def main():
             # loss_theta = conf_loss + opts.w * orient_loss
             # loss = opts.alpha * scale_loss + loss_theta
 
-            loss += opts.alpha*scale_loss + orient_loss
+            loss += opts.alpha * scale_loss + orient_loss
 
-        return loss/num_obj
+        return loss / num_obj
 
     trainer = Trainer(opts.train,
                       model,
@@ -126,5 +130,5 @@ def main():
     print('======Training End======')
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     main()
