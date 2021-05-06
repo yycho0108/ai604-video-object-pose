@@ -39,6 +39,7 @@ def decode(example, feature_names: List[str] = []):
     h = example['image/height'].item()
     points = example['point_2d'].numpy()
     num_instances = example['instance_num'].item()
+    num_keypoints = example['point_num'].numpy()
     points = points.reshape(num_instances, NUM_KEYPOINTS, 3)
 
     if False:
@@ -61,7 +62,8 @@ def decode(example, feature_names: List[str] = []):
         Schema.TRANSLATION: example['object/translation'],
         Schema.ORIENTATION: example['object/orientation'],
         Schema.SCALE: example['object/scale'],
-        Schema.PROJECTION: example['camera/projection']
+        Schema.PROJECTION: example['camera/projection'],
+        Schema.KEYPOINT_NUM: num_keypoints,
     }
 
     out.update({k: example[k] for k in feature_names})
@@ -102,8 +104,10 @@ class Objectron(th.utils.data.IterableDataset):
             'object/translation',
             'object/orientation',
             'object/scale',
-            'POINT_3D',
-            'POINT_NUM',
+            'point_3d',
+            'point_2d',
+            'point_num',
+            'camera/intrinsics',
         )
         cache_dir = '~/.cache/ai604/'
 
