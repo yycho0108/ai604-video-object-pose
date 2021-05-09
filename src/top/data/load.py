@@ -28,7 +28,11 @@ def encode_dataset_options(obj: DatasetOptions) -> str:
     return str(obj.value)
 
 
-register_decoding_fn(DatasetOptions, DatasetOptions.__getitem__)
+def decode_dataset_options(obj: str) -> DatasetOptions:
+    return DatasetOptions(obj)
+
+
+register_decoding_fn(DatasetOptions, decode_dataset_options)
 
 
 @dataclass

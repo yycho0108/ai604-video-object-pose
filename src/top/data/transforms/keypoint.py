@@ -34,7 +34,9 @@ class DenseMapsMobilePose:
     class Settings(Serializable):
         # kernel_size: Tuple[int, int] = (5, 5)
         kernel_size: int = 9
-        sigma: float = 1.0
+        # NOTE(ycho): This `sigma` is defined w.r.t pixel(kernel) units rather
+        # than normalized image coordinates, which can be problematic.
+        sigma: float = 3.0
         # NOTE: in_place still results in a shallow copy.
         in_place: bool = True
         num_class: int = 9  # bikes, books, etc.
@@ -181,6 +183,8 @@ class DenseMapsMobilePose:
                 (off_i00, off_i01, off_i10, off_i11) = i_off
 
                 # Update applicable region from relevant parts of the kernel.
+                # TODO(ycho): Consider if classwise vs. unified heatmap is the
+                # right way to go.
                 roi = heatmap[..., i_cls, box_i00 + off_i00:box_i01 + off_i01,
                               box_i10 + off_i10:box_i11 + off_i11]
                 ker = self.gauss_kernel[

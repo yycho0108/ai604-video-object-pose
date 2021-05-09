@@ -102,13 +102,13 @@ class DrawDisplacementMap:
         denom = (2 * self.opts.sigma * self.opts.sigma)
         vis_weights = th.where(
             mask, th.exp(-distance_map / denom),
-            th.as_tensor(0.0, device=mask.get_device())
+            th.as_tensor(0.0, device=mask.device)
         )
         vis = th.einsum(
             '...khw, kc -> ...chw',
             vis_weights,
             self.colors.to(
-                vis_weights.get_device()))
+                vis_weights.device))
 
         # Format outputs.
         if self.opts.key_out and isinstance(inputs, dict):
