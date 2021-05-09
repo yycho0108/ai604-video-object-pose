@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+Set of transforms related to data augmentation.
+"""
+
+__all__ = ['PhotometricAugment']
 
 from dataclasses import dataclass
 from simple_parsing import Serializable
@@ -10,13 +15,6 @@ import torchvision.io as thio
 from torchvision import transforms
 
 from top.data.schema import Schema
-
-from top.data.objectron_dataset import (
-    Objectron,
-    SampleObjectron,
-    DecodeImage,
-    ParseFixedLength,
-    _skip_none)
 
 
 class PhotometricAugment:
@@ -55,6 +53,14 @@ class PhotometricAugment:
 
 
 def main():
+
+    from top.data.objectron_sequence import (
+        ObjectronSequence,
+        SampleObjectron,
+        DecodeImage,
+        ParseFixedLength,
+        _skip_none)
+
     opts = SampleObjectron.Settings()
     xfm = transforms.Compose([
         DecodeImage(size=(480, 640)),

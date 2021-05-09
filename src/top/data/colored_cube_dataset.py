@@ -208,7 +208,12 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
             # NOTE(ycho): Swap conventions here...
             # rotation matrix : rmul -> lmul
             # NOTE(ycho): Also, return flattened output as in `Objectron`.
-            orientation = (R.transpose(2, 1).reshape(self.opts.batch_size, -1))
+            translation = T.reshape(self.opts.batch_size, 1, 3)
+            scale = th.full_like(translation, 1.0)
+            orientation = (
+                R.transpose(
+                    2, 1).reshape(
+                    self.opts.batch_size, 1, -1))
 
             # TODO(ycho): Figure out a way to unify these formats.
             # see ai604-video-object-pose#10
@@ -218,8 +223,8 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
                 Schema.CLASS: th.zeros((self.opts.batch_size, 1), dtype=th.int32,
                                        device=self.device),
                 Schema.ORIENTATION: orientation,
-                Schema.TRANSLATION: T,
-                Schema.SCALE: th.full_like(T, 1.0),
+                Schema.TRANSLATION: translation,
+                Schema.SCALE: scale,
                 Schema.KEYPOINT_2D: points_2d,
                 Schema.INSTANCE_NUM: th.ones(
                     self.opts.batch_size,

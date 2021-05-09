@@ -14,56 +14,33 @@ from torch.utils.tensorboard import SummaryWriter
 
 from top.train.saver import Saver
 from top.train.trainer import Trainer
-
 from top.train.event.hub import Hub
 from top.train.event.topics import Topic
 from top.train.event.helpers import (Collect, Periodic, Evaluator)
-from top.train.callback import (
-    Callbacks, EvalCallback, SaveModelCallback)
-from top.run.app_util import update_settings
-from top.run.path_util import RunPath
-from top.run.torch_util import resolve_device
 
 from top.model.keypoint import KeypointNetwork2D
 from top.model.loss import ObjectHeatmapLoss, KeypointDisplacementLoss
-from top.data.objectron_dataset_detection import Objectron, SampleObjectron
-from top.data.colored_cube_dataset import ColoredCubeDataset
-from top.data.transforms import DenseMapsMobilePose, Normalize
+
+from top.data.transforms import (
+    DenseMapsMobilePose,
+    Normalize,
+    InstancePadding,
+    DrawDisplacementMap
+)
 from top.data.schema import Schema
+from top.data.load import (DatasetSettings, get_loaders)
 
-# NOTE(ycho): Required for dealing with our `enum`
-from simple_parsing.helpers.serialization import encode, register_decoding_fn
-
-
-class DatasetOptions(enum.Enum):
-    CUBE = "CUBE"
-    OBJECTRON = "OBJECTRON"
-    SAMPLE_OBJECTRON = "SAMPLE_OBJECTRON"
-
-
-# NOTE(ycho): Register encoder-decoder pair for `DatasetOptions` enum.
-# NOTE(ycho): Parsing from type annotations: only available for python>=3.7.
-@encode.register(DatasetOptions)
-def encode_dataset_options(obj: DatasetOptions) -> str:
-    """Encode the enum with the underlying `str` representation. """
-    return str(obj.value)
-
-
-register_decoding_fn(DatasetOptions, DatasetOptions.__getitem__)
+from top.run.app_util import update_settings
+from top.run.path_util import RunPath
+from top.run.torch_util import resolve_device
 
 
 @dataclass
 class AppSettings(Serializable):
     model: KeypointNetwork2D.Settings = KeypointNetwork2D.Settings()
 
-    # Select dataset among different options, by name.
-    dataset: DatasetOptions = DatasetOptions.OBJECTRON
-
-    cube: ColoredCubeDataset.Settings = ColoredCubeDataset.Settings()
-    objectron: Objectron.Settings = Objectron.Settings()
-    # TODO(ycho): SampleObjectron should be deprecated in favor of just
-    # using CachedDataset() directly. (Confusing settings)
-    sample_objectron: SampleObjectron.Settings = SampleObjectron.Settings()
+    # Dataset selection options.
+    dataset: DatasetSettings = DatasetSettings()
 
     # NOTE(ycho): root run path is set to tmp dir y default.
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
@@ -80,57 +57,8 @@ class AppSettings(Serializable):
     # Evaluation interval / every N train steps
     eval_period: int = int(1e3)
 
-
-def load_data(opts: AppSettings, device: th.device):
-    """ Fetch pair of (train,test) loaders for MNIST data """
-    # TODO(ycho): Consider scripted compositions?
-    transform = Compose([
-        DenseMapsMobilePose(DenseMapsMobilePose.Settings(), device),
-        Normalize(Normalize.Settings())
-    ])
-
-    # TODO(ycho): Prefer unified interface across dataset instances.
-    # FIXME(ycho): Maybe not the most elegant idea.
-    # The code looks complex due to the nested replacement.
-    # In general, we consider `dataclass` instances to be immutable,
-    # which is why such a workaround is necessary.
-    # TODO(ycho): Consider alternatives.
-    if opts.dataset == DatasetOptions.CUBE:
-        data_opts = opts.cube
-        train_dataset = ColoredCubeDataset(
-            data_opts, device, transform)
-        test_dataset = ColoredCubeDataset(
-            data_opts, device, transform)
-    elif opts.dataset == DatasetOptions.OBJECTRON:
-        data_opts = opts.objectron
-
-        data_opts = replace(data_opts, train=True)
-        train_dataset = Objectron(data_opts, transform)
-
-        data_opts = replace(data_opts, train=False)
-        test_dataset = Objectron(data_opts, transform)
-    elif opts.dataset == DatasetOptions.SAMPLE_OBJECTRON:
-        objectron_opts = replace(
-            opts.sample_objectron.objectron, train=True)
-        data_opts = replace(
-            opts.sample_objectron, objectron=objectron_opts)
-        train_dataset = SampleObjectron(data_opts, transform)
-
-        objectron_opts = replace(
-            opts.sample_objectron.objectron, train=False)
-        data_opts = replace(
-            opts.sample_objectron, objectron=objectron_opts)
-        test_dataset = SampleObjectron(data_opts, transform)
-    else:
-        raise ValueError(F'Invalid dataset choice : {opts.dataset}')
-
-    train_loader = th.utils.data.DataLoader(
-        train_dataset, batch_size=opts.batch_size)
-
-    test_loader = th.utils.data.DataLoader(
-        test_dataset, batch_size=opts.batch_size)
-
-    return (train_loader, test_loader)
+    padding: InstancePadding.Settings = InstancePadding.Settings()
+    maps: DenseMapsMobilePose.Settings = DenseMapsMobilePose.Settings()
 
 
 class TrainLogger:
@@ -146,6 +74,8 @@ class TrainLogger:
         self.tqdm = tqdm()
         self.period = period
         self._subscribe()
+
+        self.draw_dmap = DrawDisplacementMap(DrawDisplacementMap.Settings())
 
     def _on_loss(self, loss):
         """ log training loss. """
@@ -163,9 +93,14 @@ class TrainLogger:
         """ log training outputs. """
 
         # Fetch inputs ...
-        input_image = (inputs[Schema.IMAGE].detach())
-        out_heatmap = (th.sigmoid(outputs[Schema.HEATMAP_LOGITS]).detach())
-        target_heatmap = inputs[Schema.HEATMAP].detach()
+        with th.no_grad():
+            input_image = (inputs[Schema.IMAGE].detach())
+            out_heatmap = (th.sigmoid(outputs[Schema.HEATMAP_LOGITS]).detach())
+            target_heatmap = inputs[Schema.HEATMAP].detach()
+            # NOTE(ycho): Only show for first image
+            # feels a bit wasteful? consider better alternatives...
+            dmap_vis = self.draw_dmap(
+                outputs[Schema.DISPLACEMENT_MAP][0]).detach()
 
         # TODO(ycho): denormalize input image.
         self.writer.add_image(
@@ -177,6 +112,9 @@ class TrainLogger:
                                global_step=self.step)
         self.writer.add_images('target_heatmap',
                                target_heatmap[0, :, None].cpu(),
+                               global_step=self.step)
+        self.writer.add_images('displacement_map',
+                               dmap_vis.cpu(),
                                global_step=self.step)
 
     def _on_step(self, step):
@@ -206,9 +144,17 @@ def main():
     optimizer = th.optim.Adam(model.parameters(), lr=1e-3)
     writer = th.utils.tensorboard.SummaryWriter(path.log)
 
-    # NOTE(ycho): Force data loading on the CPU.
-    # train_loader, test_loader = load_data(opts, device=device)
-    train_loader, test_loader = load_data(opts, device=th.device('cpu:0'))
+    # NOTE(ycho): Forcing data loading on the CPU.
+    # TODO(ycho): Consider scripted compositions?
+    transform = Compose([
+        DenseMapsMobilePose(opts.maps, th.device('cpu:0')),
+        Normalize(Normalize.Settings()),
+        InstancePadding(opts.padding)
+    ])
+    train_loader, test_loader = get_loaders(opts.dataset,
+                                            device=th.device('cpu:0'),
+                                            batch_size=opts.batch_size,
+                                            transform=transform)
 
     # NOTE(ycho): Synchronous event hub.
     hub = Hub()
@@ -284,7 +230,8 @@ def main():
 
     def _loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
-        data = {k: v.to(device) for (k, v) in data.items()}
+        data = {k: (v.to(device) if isinstance(v, th.Tensor) else v)
+                for (k, v) in data.items()}
         image = data[Schema.IMAGE]
         outputs = model(image)
         # Also make input/output pair from training

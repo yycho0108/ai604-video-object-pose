@@ -36,8 +36,10 @@ class KeypointDisplacementLoss(nn.Module):
         pred = output[Schema.DISPLACEMENT_MAP]
         mask = th.isfinite(target[Schema.DISPLACEMENT_MAP])
         diff = pred - target[Schema.DISPLACEMENT_MAP]
+        # NOTE(ycho): during inference, this mask is approximated
+        # by the heatmaps.
         diff[~mask] = 0.0
-        # NOTE(ycho) Using abs here which amounts to L1 loss.
+        # NOTE(ycho): Using abs here, which results in L1 loss.
         numer = th.sum(th.abs(diff))
         denom = th.sum(mask)
         return numer / denom
