@@ -10,7 +10,7 @@ from typing import Tuple
 import numpy as np
 import os
 import json
-from simple_parsing.helpers.serialization.serializable import Serializable
+from simple_parsing import Serializable
 
 import torch as th
 import cv2
@@ -29,13 +29,13 @@ class NumpyEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self,obj)
 
 
-"""
-Class will hold the average dimension for a class, regressed value is the residual
-"""
 class ClassAverages:
+    """
+    Class will hold the average dimension for a class, regressed value is the residual
+    """
     def __init__(self, classes=[]):
         self.dimension_map = {}
-        self.filename = os.path.abspath(os.path.dirname(__file__)) + '/class_averages.txt'
+        self.filename = os.path.abspath(os.path.dirname(__file__)) + '/class_averages.json'
 
         if len(classes) == 0: # eval mode
             self.load_items_from_file()
@@ -77,7 +77,6 @@ class ClassAverages:
         return class_.lower() in self.dimension_map
 
 
-# FIXME(Jiyong): need to test
 class CropObject(object):
     """
     Crop object from image.
@@ -86,11 +85,12 @@ class CropObject(object):
 
     @dataclass
     class Settings(Serializable):
-        crop_img_size: Tuple[int, int, int] = (224, 224)
+        crop_img_size: Tuple[int, int] = (224, 224)
 
     def __init__(self, opts: Settings):
         self.opts = opts
 
+    # FIXME(Jiyon): make batch with cropped image, np,scipy -> th
     def __call__(self, inputs: dict):
         # Parse inputs
         image = inputs[Schema.IMAGE]
@@ -108,7 +108,7 @@ class CropObject(object):
                         for keypoint in keypoints_2d]
         
         orientation = np.split(orientation, num_object)
-        orientation = [rotation.reshape(3,3) for rotation in orientation]
+        orientation = [rotation.reshape(-1,3,3) for rotation in orientation]
 
         scale = np.split(scale, num_object)
         scale = [scales.reshape(-1,3) for scales in scale]
@@ -118,8 +118,8 @@ class CropObject(object):
 
         crop_img = []
         quaternions = []
-        _scale = []
-        _translation = []
+        scale_ = []
+        translation_ = []
         for object_id in range(num_object):       
             # NOTE(Jiyong): np.split() leaves an empty array at the end of the list.
             if keypoints_2d[object_id].size == 0:
@@ -145,13 +145,14 @@ class CropObject(object):
             r = R.from_matrix(orientation[object_id])
             quaternions.append(r.as_quat())
 
-            _scale.append(scale[object_id])
-            _translation.append(translation[object_id])
+            scale_.append(scale[object_id])
+            translation_.append(translation[object_id])
 
+        # shallow copy
         outputs = inputs.copy()
         outputs['crop_img'] = np.stack(crop_img, axis=0)
-        outputs[Schema.TRANSLATION] = _translation
-        outputs[Schema.SCALE] = _scale
+        outputs[Schema.TRANSLATION] = translation_
+        outputs[Schema.SCALE] = scale_
         outputs[Schema.ORIENTATION] = quaternions
         outputs[Schema.VISIBILITY] = th.as_tensor(inputs[Schema.VISIBILITY]).reshape(-1,1)
         # print([(k, v.shape) if isinstance(v, th.Tensor) else (k,v) for k,v in outputs.items()])

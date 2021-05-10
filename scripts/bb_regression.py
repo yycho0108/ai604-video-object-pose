@@ -35,10 +35,9 @@ class AppSettings(Serializable):
     dataset: Objectron.Settings = Objectron.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
     train: Trainer.Settings = Trainer.Settings(train_steps=1, eval_period=1)
-    # FIXME(Jiyong): need to padding for batch
+    # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 1
     alpha: float = 0.5
-    # w: float = 0.4
     device: str = 'cpu'
 
 
@@ -80,17 +79,14 @@ def main():
     # NOTE(Jiyong): for MultiBin method
     # conf_loss_func = nn.CrossEntropyLoss().to(device)
     # orient_loss_func = orientation_loss
-    orientation_loss = nn.MSELoss().to(device)
+    orientation_loss_func = nn.MSELoss().to(device)
     scale_loss_func = nn.MSELoss().to(device)
 
     def loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
-        data = {k: v for (k, v) in data.items()}
-
-        image = data['crop_img']
+        image = data[Schema.CROPPED_IMAGE]
         truth_orient = data[Schema.ORIENTATION]
         truth_dim = data[Schema.SCALE]
-        # truth_conf = data['Confidence'].long().to(device)
 
         # FIXME(Jiyong): parallelize by padding
         num_obj = len(image)
@@ -107,12 +103,6 @@ def main():
 
             scale_loss = scale_loss_func(dim, _truth_dim)
             orient_loss = orientation_loss(quat, _truth_orient)
-
-            # orient_loss = orientation_loss(orient, truth_orient, truth_conf)
-            # truth_conf = th.max(truth_conf, dim=1)[1]
-            # conf_loss = conf_loss_func(conf, truth_conf)
-            # loss_theta = conf_loss + opts.w * orient_loss
-            # loss = opts.alpha * scale_loss + loss_theta
 
             loss += opts.alpha * scale_loss + orient_loss
 
