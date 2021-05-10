@@ -16,6 +16,7 @@ import torch as th
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose
+from top.data.transforms.common import InstancePadding
 
 from top.train.trainer import Trainer
 from top.train.trainer import Saver
@@ -31,7 +32,7 @@ from top.model.bbox_3d import BoundingBoxRegressionModel
 
 from top.data.load import (DatasetSettings, get_loaders)
 from top.data.schema import Schema
-from top.data.bbox_reg_util import CropObject, ClassAverages
+from top.data.bbox_reg_util import CropObject
 
 
 @dataclass
@@ -40,7 +41,7 @@ class AppSettings(Serializable):
     
     # Dataset selection options.
     dataset: DatasetSettings = DatasetSettings()
-    
+    padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
     train: Trainer.Settings = Trainer.Settings(train_steps=1, eval_period=1)
     # FIXME(Jiyong): need to test padding for batch
@@ -105,7 +106,8 @@ def main():
     optimizer = th.optim.Adam(model.parameters(), lr=1e-3)
     writer = SummaryWriter(path.log)
 
-    transform = Compose([CropObject(CropObject.Settings())])
+    transform = Compose([CropObject(CropObject.Settings()),
+                         InstancePadding(opts.padding)])
     train_loader, test_loader = get_loaders(opts.dataset,
                                             device=th.device('cpu'),
                                             batch_size=opts.batch_size,
@@ -176,26 +178,17 @@ def main():
 
     def _loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
-        image = data[Schema.CROPPED_IMAGE]
-        truth_orient = data[Schema.ORIENTATION]
-        truth_dim = data[Schema.SCALE]
+        image = data[Schema.CROPPED_IMAGE].to(device)
+        truth_orient = data[Schema.ORIENTATION].to(device)
+        truth_dim = data[Schema.SCALE].to(device)
 
-        # FIXME(Jiyong): parallelize by padding
-        num_obj = len(image)
-        loss = 0
-        for i in range(num_obj):
-            _image = image[i].to(device)
-            _truth_orient = th.squeeze(truth_orient[i]).to(device)
-            _truth_dim = th.squeeze(truth_dim[i]).to(device)
+        dim, quat = model(image)
 
-            dim, quat = model(_image)
+        scale_loss = scale_loss_func(dim, truth_dim)
+        orient_loss = orientation_loss_func(quat, truth_orient)
+        loss = opts.alpha * scale_loss + orient_loss
 
-            scale_loss = scale_loss_func(dim, _truth_dim)
-            orient_loss = orientation_loss_func(quat, _truth_orient)
-
-            loss += opts.alpha * scale_loss + orient_loss
-
-        return loss / num_obj
+        return loss
 
     trainer = Trainer(opts.train,
                       model,
