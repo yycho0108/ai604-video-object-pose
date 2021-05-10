@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from simple_parsing import Serializable
 from dataclasses import dataclass
 
 
@@ -32,11 +33,11 @@ class RunPath(object):
     """
 
     @dataclass
-    class Settings:
+    class Settings(Serializable):
         key_format: str = 'run-{:03d}'
         root: str = '/tmp/'  # Alternatively, ~/.cache/ai604/run/
-        key: str = '' # Empty string indicates auto increment.
- 
+        key: str = ''  # Empty string indicates auto increment.
+
     def __init__(self, opts: Settings):
         self.opts = opts
         self.root = Path(opts.root).expanduser()

@@ -21,12 +21,12 @@ from top.run.torch_util import resolve_device
 
 def main():
 
-    dataset_cls = ColoredCubeDataset
-    # dataset_cls = SampleObjectron
+    # dataset_cls = ColoredCubeDataset
+    dataset_cls = SampleObjectron
 
     opts = dataset_cls.Settings()
     opts = update_settings(opts)
-    device = resolve_device('cpu:0')
+    device = resolve_device('cpu')
 
     xfm = Compose([BoxHeatmap(device=device),
                    DrawKeypoints(DrawKeypoints.Settings()),

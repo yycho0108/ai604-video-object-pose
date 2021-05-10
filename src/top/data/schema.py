@@ -2,6 +2,9 @@
 
 from enum import Enum
 
+# NOTE(ycho): Required for dealing with `enum` registration
+from simple_parsing.helpers.serialization import encode, register_decoding_fn
+
 
 class Schema(Enum):
     """
@@ -22,3 +25,26 @@ class Schema(Enum):
     HEATMAP_LOGITS = "object/heatmap_logits"
     DISPLACEMENT_MAP = "displacement_map"
     KEYPOINT_NUM = "point_num"
+
+
+@encode.register(Schema)
+def encode_schema(obj: Schema) -> str:
+    """Encode the enum with the underlying `str` representation. """
+    return str(obj.value)
+
+
+def decode_schema(obj: str) -> Schema:
+    """ Decode str into Schema enum """
+    return Schema(obj)
+
+
+register_decoding_fn(Schema, decode_schema)
+
+
+def main():
+    s = encode_schema(Schema.KEYPOINT_2D)
+    decode_schema(s)
+
+
+if __name__ == '__main__':
+    main()
