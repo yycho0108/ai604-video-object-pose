@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 #PYTHON_ARGCOMPLETE_OK
 
+import pkg_resources
+
 import itertools
 from dataclasses import dataclass
 from simple_parsing import Serializable
@@ -12,7 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.utils import save_image
 
-from pytorch3d.structures import Pointclouds
+from pytorch3d.io import load_objs_as_meshes
+from pytorch3d.structures import Pointclouds, Meshes
 from pytorch3d.transforms.transform3d import Transform3d
 from pytorch3d.renderer import (
     look_at_view_transform,
@@ -20,7 +23,13 @@ from pytorch3d.renderer import (
     PointsRasterizationSettings,
     PointsRenderer,
     PointsRasterizer,
+    MeshRenderer,
+    MeshRasterizer,
+    RasterizationSettings,
+    SoftPhongShader,
+    PointLights,
     AlphaCompositor,
+    TexturesVertex
 )
 
 from top.run.torch_util import resolve_device
@@ -49,6 +58,7 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
         image_size: Tuple[int, int] = (256, 256)  # Order: H W
         # Unstack output tensors, for compatibility with Objectron.
         unstack: bool = True
+        use_mesh: bool = False
 
     def __init__(self, opts: Settings, device: th.device = '', transform=None):
         super().__init__()
@@ -57,8 +67,12 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
         self.xfm = transform
         # TODO(ycho): Consider support for multiple "objects".
         # TODO(ycho): Consider support for *animated* objects through time.
-        self.cloud = self._get_point_cloud()
+
+        self.cloud = self._get_cube_cloud()
         self.clouds = self.cloud.extend(self.opts.batch_size)
+        self.mesh = self._get_cube_mesh()
+        self.meshes = self.mesh.extend(self.opts.batch_size)
+
         self.renderer = self._setup_render()
         self.tan_half_fov = np.tan(np.deg2rad(0.5 * self.opts.fov))
 
@@ -87,23 +101,43 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
         # these parameters.
         # points_per_pixel (Optional): We will keep track of this many points per
         # pixel, returning the nearest points_per_pixel points along the z-axis
-        raster_settings = PointsRasterizationSettings(
-            image_size=opts.image_size,
-            radius=0.1,
-            points_per_pixel=8
-        )
 
         # Create a points renderer by compositing points using an alpha compositor (nearer points
         # are weighted more heavily). See [1] for an explanation.
-        rasterizer = PointsRasterizer(
-            cameras=cameras, raster_settings=raster_settings)
-        renderer = PointsRenderer(
-            rasterizer=rasterizer,
-            compositor=AlphaCompositor()
-        )
+        if self.opts.use_mesh:
+            raster_settings = RasterizationSettings(
+                image_size=opts.image_size,
+                blur_radius=0.0,  # hmm...
+                faces_per_pixel=1
+            )
+            rasterizer = MeshRasterizer(cameras=cameras,
+                                        raster_settings=raster_settings)
+            lights = PointLights(device=self.device,
+                                 location=[[0.0, 0.0, -3.0]])
+
+            renderer = MeshRenderer(
+                rasterizer=rasterizer,
+                shader=SoftPhongShader(
+                    device=self.device,
+                    cameras=cameras,
+                    lights=lights
+                )
+            )
+        else:
+            raster_settings = PointsRasterizationSettings(
+                image_size=opts.image_size,
+                radius=0.1,
+                points_per_pixel=8
+            )
+            rasterizer = PointsRasterizer(
+                cameras=cameras, raster_settings=raster_settings)
+            renderer = PointsRenderer(
+                rasterizer=rasterizer,
+                compositor=AlphaCompositor()
+            )
         return renderer
 
-    def _get_point_cloud(self):
+    def _get_cube_cloud(self):
         """
         Get vertices of a unit-cube, with colors assigned according to vertex coordinates.
         """
@@ -111,12 +145,46 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
             *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))
         vertices = np.insert(vertices, 0, [0, 0, 0], axis=0)
         vertices = th.as_tensor(vertices, dtype=th.float32, device=self.device)
-        vertices = vertices
 
         # Map vertices to colors. =RGB(0.25~0.75)
         colors = (0.5 + 0.5 * vertices)
         cloud = Pointclouds(points=vertices[None], features=colors[None])
         return cloud
+
+    def _get_cube_mesh(self):
+        # NOTE(ycho): duplicated from _get_cube_cloud()
+        vertices = list(itertools.product(
+            *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))
+        vertices = np.insert(vertices, 0, [0, 0, 0], axis=0)
+        vertices = th.as_tensor(
+            vertices, dtype=th.float32, device=self.device)
+
+        # FIXME(ycho): Hardcoded face indices.
+        # (We can't use Box.FACE since we need triangulated faces)
+        faces = [[7, 3, 5],
+                 [5, 3, 1],
+                 [5, 1, 6],
+                 [6, 1, 2],
+                 [6, 2, 8],
+                 [8, 2, 4],
+                 [8, 4, 7],
+                 [7, 4, 3],
+                 [3, 4, 1],
+                 [1, 4, 2],
+                 [8, 7, 6],
+                 [6, 7, 5]]
+        face_indices = th.as_tensor(
+            faces, dtype=th.int32, device=self.device).reshape(-1, 3, 3)
+        textures = TexturesVertex(
+            verts_features=(
+                0.5 + 0.5 * vertices)[None])
+        mesh = Meshes(
+            verts=vertices[None],
+            faces=face_indices[None],
+            textures=textures
+        )
+
+        return mesh
 
     def _render(self):
         """
@@ -161,9 +229,15 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
             # Compose the `lookat` camera transform according to this position
             R, T = look_at_view_transform(
                 eye=pos, at=at, device=self.device)
-            img = self.renderer(
-                point_clouds=self.clouds, R=R, T=T
-            )
+            if self.opts.use_mesh:
+                # NOTE(ycho): Ignoring alpha dimension
+                img = self.renderer(
+                    self.meshes, R=R, T=T
+                )[..., :3]
+            else:
+                img = self.renderer(
+                    point_clouds=self.clouds, R=R, T=T
+                )
 
             # pytorch3d uses `NHWC` convension, convert to NCHW.
             img = img.permute(0, 3, 1, 2)
@@ -178,12 +252,13 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
     def __iter__(self):
         while True:
             (img, R, T) = self._render()
-            points_2d = self.renderer.rasterizer.transform(
-                self.clouds, R=R, T=T)
+            points_2d = self.renderer.rasterizer.cameras.transform_points(
+                self.clouds.points_padded(), R=R, T=T)
 
             # Convert `points` to UV coordinates.
             # This is to be consistent with the objectron dataset convention.
-            points_2d = points_2d.points_padded()
+            if not isinstance(points_2d, th.Tensor):
+                points_2d = points_2d.points_padded()
             points_2d[..., :2] *= -0.5
             points_2d[..., :2] += 0.5
 
@@ -253,7 +328,7 @@ def main():
     device = resolve_device()
     dataset = ColoredCubeDataset(opts, device,)
     for data in dataset:
-        save_image(data['image'] / 255.0, F'/tmp/img.png')
+        save_image(data[Schema.IMAGE] / 255.0, F'/tmp/img.png')
         break
 
 

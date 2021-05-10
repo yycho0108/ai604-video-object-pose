@@ -99,13 +99,16 @@ class TrainLogger:
             target_heatmap = inputs[Schema.HEATMAP].detach()
             # NOTE(ycho): Only show for first image
             # feels a bit wasteful? consider better alternatives...
-            dmap_vis = self.draw_dmap(
+            out_dispmap = self.draw_dmap(
                 outputs[Schema.DISPLACEMENT_MAP][0]).detach()
+            target_dispmap = self.draw_dmap(
+                inputs[Schema.DISPLACEMENT_MAP][0]).detach()
 
         # TODO(ycho): denormalize input image.
+        image = th.clip(0.5 + (input_image[0] * 0.25), 0.0, 1.0)
         self.writer.add_image(
             'train_images',
-            input_image[0].cpu(),
+            image.cpu(),
             global_step=self.step)
         self.writer.add_images('out_heatmap',
                                out_heatmap[0, :, None].cpu(),
@@ -113,8 +116,11 @@ class TrainLogger:
         self.writer.add_images('target_heatmap',
                                target_heatmap[0, :, None].cpu(),
                                global_step=self.step)
-        self.writer.add_images('displacement_map',
-                               dmap_vis.cpu(),
+        self.writer.add_images('out_dispmap',
+                               out_dispmap.cpu(),
+                               global_step=self.step)
+        self.writer.add_images('target_dispmap',
+                               target_dispmap.cpu(),
                                global_step=self.step)
 
     def _on_step(self, step):
@@ -131,6 +137,20 @@ class TrainLogger:
 
     def __del__(self):
         self.tqdm.close()
+
+
+class ModelAsTuple(th.nn.Module):
+    """
+    Workaround to avoid tracing bugs in add_graph from
+    rejecting outputs of form Dict[Schema,Any].
+    """
+
+    def __init__(self, model: th.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, inputs):
+        return tuple(v for (k, v) in self.model(inputs).items())
 
 
 def main():
@@ -159,14 +179,23 @@ def main():
     # NOTE(ycho): Synchronous event hub.
     hub = Hub()
 
-    # Save meta-parameters.
-    def _save_params():
+    def _on_train_begin():
+
+        # Save meta-parameters.
         opts.save(path.dir / 'opts.yaml')
-        # NOTE(ycho): Only works with a modified version of the
+        # NOTE(ycho): Currently `load` only works with a modified version of the
         # main SimpleParsing repository.
         # opts.load(path.dir / 'opts.yaml')
+
+        # Generate tensorboard graph.
+        data = next(iter(test_loader))
+        dummy = data[Schema.IMAGE].to(device).detach()
+        # NOTE(ycho): No need to set model to `eval`,
+        # eval mode is set internally within add_graph().
+        writer.add_graph(ModelAsTuple(model), dummy)
+
     hub.subscribe(
-        Topic.TRAIN_BEGIN, _save_params)
+        Topic.TRAIN_BEGIN, _on_train_begin)
 
     # Periodically log training statistics.
     # FIXME(ycho): hardcoded logging period.

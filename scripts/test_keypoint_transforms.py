@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
+
+from dataclasses import dataclass
+from simple_parsing import Serializable
 
 import torch as th
 from torchvision.transforms import Compose
 from torchvision.utils import save_image
 
+from top.data.load import (DatasetSettings, get_loaders)
 from top.data.objectron_detection import ObjectronDetection, SampleObjectron
 from top.data.colored_cube_dataset import ColoredCubeDataset
 from top.data.transforms import (
@@ -19,13 +24,15 @@ from top.run.app_util import update_settings
 from top.run.torch_util import resolve_device
 
 
+@dataclass
+class AppSettings(Serializable):
+    dataset: DatasetSettings = DatasetSettings()
+
+
 def main():
-
-    # dataset_cls = ColoredCubeDataset
-    dataset_cls = SampleObjectron
-
-    opts = dataset_cls.Settings()
+    opts = AppSettings()
     opts = update_settings(opts)
+
     device = resolve_device('cpu')
 
     xfm = Compose([BoxHeatmap(device=device),
@@ -38,10 +45,7 @@ def main():
                    ))
                    ])
 
-    if dataset_cls is SampleObjectron:
-        dataset = dataset_cls(opts, transform=xfm)
-    else:
-        dataset = dataset_cls(opts, device, transform=xfm)
+    dataset, _ = get_loaders(opts.dataset, device, None, xfm)
 
     for data in dataset:
         save_image(data[Schema.IMAGE] / 255.0, F'/tmp/img.png')

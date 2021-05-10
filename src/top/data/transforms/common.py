@@ -38,7 +38,7 @@ class Normalize:
     class Settings(Serializable):
         mean: float = 0.5
         std: float = 0.25
-        in_place: bool = True
+        in_place: bool = False
         keys: Tuple[Schema, ...] = (Schema.IMAGE,)
 
     def __init__(self, opts: Settings):
