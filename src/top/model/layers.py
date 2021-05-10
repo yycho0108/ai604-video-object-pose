@@ -64,7 +64,7 @@ class EncoderBlock(nn.Module):
 class DisplacementLayer2D(nn.Module):
     @dataclass
     class Settings(Serializable):
-        hidden: Tuple[int] = ()
+        hidden: Tuple[int, ...] = ()
         # NOTE(ycho): 9 vertices by default, including centroid.
         num_keypoints: int = 9
 
@@ -101,7 +101,7 @@ class HeatmapLayer2D(nn.Module):
 
     @dataclass
     class Settings(Serializable):
-        hidden: Tuple[int] = ()
+        hidden: Tuple[int, ...] = ()
         num_class: int = 9
 
     def __init__(self, opts: Settings, c_in: int):
