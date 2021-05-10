@@ -9,22 +9,27 @@ Reference:
 
 from dataclasses import dataclass, replace
 from simple_parsing import Serializable
+from typing import Dict, Any
+from tqdm.auto import tqdm
 
 import torch as th
 import torch.nn as nn
+from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose
 
 from top.train.trainer import Trainer
-from top.train.callback import Callbacks, EvalCallback, SaveModelCallback
+from top.train.trainer import Saver
+from top.train.event.hub import Hub
+from top.train.event.topics import Topic
+from top.train.event.helpers import (Collect, Periodic, Evaluator)
 
 from top.run.app_util import update_settings
 from top.run.path_util import RunPath
 from top.run.torch_util import resolve_device
 
 from top.model.bbox_3d import BoundingBoxRegressionModel
-from top.model.loss_util import orientation_loss, generate_bins
 
-from top.data.objectron_detection import Objectron
+from top.data.load import (DatasetSettings, get_loaders)
 from top.data.schema import Schema
 from top.data.bbox_reg_util import CropObject, ClassAverages
 
@@ -32,7 +37,10 @@ from top.data.bbox_reg_util import CropObject, ClassAverages
 @dataclass
 class AppSettings(Serializable):
     model: BoundingBoxRegressionModel.Settings = BoundingBoxRegressionModel.Settings()
-    dataset: Objectron.Settings = Objectron.Settings()
+    
+    # Dataset selection options.
+    dataset: DatasetSettings = DatasetSettings()
+    
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
     train: Trainer.Settings = Trainer.Settings(train_steps=1, eval_period=1)
     # FIXME(Jiyong): need to test padding for batch
@@ -41,26 +49,50 @@ class AppSettings(Serializable):
     device: str = 'cpu'
 
 
-def load_data(opts: AppSettings, device: th.device):
-    # TODO(Jiyong): change data preprocessing for ClassAverage of dimesion.
-    # Currently, regress dimension directly(not residual)
-    transform = Compose([CropObject(CropObject.Settings())])
-    data_opts = opts.dataset
+class TrainLogger:
+    """
+    Logging during training - specifically, tqdm-based logging to the shell and tensorboard.
+    """
+    def __init__(self, hub: Hub, writer: SummaryWriter, period: int):
+        self.step = None
+        self.hub = hub
+        self.writer = writer
+        self.tqdm = tqdm()
+        self.period = period
+        self._subscribe()
 
-    # For train data
-    data_opts = replace(data_opts, train=True)
-    train_dataset = Objectron(data_opts, transform)
-    # For test data
-    data_opts = replace(data_opts, train=False)
-    test_dataset = Objectron(data_opts, transform)
+    def _on_loss(self, loss):
+        """log training loss."""
+        loss = loss.detach().cpu()
 
-    train_loader = th.utils.data.DataLoader(
-        train_dataset, batch_size=opts.batch_size)
-    test_loader = th.utils.data.DataLoader(
-        test_dataset, batch_size=opts.batch_size)
+        # Update tensorboard ...
+        self.writer.add_scalar('train_loss', loss, global_step=self.step)
 
-    return train_loader, test_loader
+        # update tqdm logger bar.
+        self.tqdm.set_postfix(loss=loss)
+        self.tqdm.update()
 
+    def _on_train_out(self, inputs, outputs):
+        """log tranining outputs."""
+        # Fetch inputs ...
+        with th.no_grad():
+            input_image = (inputs(Schema.IMAGE).detach())
+        
+        self.writer.add_image('train_images', input_image[0].cpu(), global_step=self.step)
+
+    def _on_step(self, step):
+        """save current step"""
+        self.step = step
+    
+    def _subscribe(self):
+        self.hub.subscribe(Topic.STEP, self._on_step)
+        # NOTE(ycho): Log loss only periodically.
+        self.hub.subscribe(Topic.TRAIN_LOSS, Periodic(self.period, self._on_loss))
+        self.hub.subscribe(Topic.TRAIN_OUT, Periodic(self.period, self._on_train_out))
+    
+    def __del__(self):
+        self.tqdm.close()
+               
 
 def main():
 
@@ -71,18 +103,78 @@ def main():
     device = resolve_device(opts.device)
     model = BoundingBoxRegressionModel(opts.model).to(device)
     optimizer = th.optim.Adam(model.parameters(), lr=1e-3)
+    writer = SummaryWriter(path.log)
 
-    train_loader, test_loader = load_data(opts, device=device)
+    transform = Compose([CropObject(CropObject.Settings())])
+    train_loader, test_loader = get_loaders(opts.dataset,
+                                            device=th.device('cpu'),
+                                            batch_size=opts.batch_size,
+                                            transform=transform)
 
-    callbacks = Callbacks([])
+    # NOTE(ycho): Synchronous event hub.
+    hub = Hub()
 
-    # NOTE(Jiyong): for MultiBin method
-    # conf_loss_func = nn.CrossEntropyLoss().to(device)
-    # orient_loss_func = orientation_loss
+    # Save meta-parameters.
+    def _save_params():
+        opts.save(path.dir / 'opts.yaml')
+    hub.subscribe(Topic.TRAIN_BEGIN, _save_params)
+
+    # Periodically log training statistics.
+    # FIXME(ycho): hardcoded logging period.
+    # NOTE(ycho): Currently only plots `loss`.
+    collect = Collect(hub, Topic.METRICS, [])
+    train_logger = TrainLogger(hub, writer, opts.log_period)
+
+    # Periodically save model, per epoch.
+    # TODO(ycho): Consider folding this callback inside Trainer().
+    hub.subscribe(
+        Topic.EPOCH,
+        lambda epoch: Saver(
+            model,
+            optimizer).save(
+            path.ckpt /
+            F'epoch-{epoch}.zip'))
+
+    # Periodically save model, per N training steps.
+    # TODO(ycho): Consider folding this callback inside Trainer()
+    # and adding {save_period} args to Trainer instead.
+    hub.subscribe(
+        Topic.STEP,
+        Periodic(opts.save_period, lambda step: Saver(
+            model,
+            optimizer).save(
+            path.ckpt /
+            F'step-{step}.zip')))
+
+    # Periodically evaluate model, per N training steps.
+    # NOTE(ycho): Load and process test data ...
+    # TODO(ycho): Consider folding this callback inside Trainer()
+    # and adding {test_loader, eval_fn} args to Trainer instead.
+    def _eval_fn(model, data):
+        return model(data[Schema.IMAGE].to(device))
+    evaluator = Evaluator(
+        Evaluator.Settings(period=opts.eval_period),
+        hub, model, test_loader, _eval_fn)
+
+    # TODO(Jiyong):
+    # All metrics evaluation should reset stats at eval_begin(),
+    # aggregate stats at eval_step(),
+    # and output stats at eval_end(). These signals are all implemented.
+    # What are the appropriate metrics to implement for bounding box regression?
+    def _on_eval_step(inputs, outputs):
+        pass
+    hub.subscribe(Topic.EVAL_STEP, _on_eval_step)
+
+    collect = Collect(hub, Topic.METRICS, [])
+
+    def _log_all(metrics: Dict[Topic, Any]):
+        pass
+    hub.subscribe(Topic.METRICS, _log_all)
+
     orientation_loss_func = nn.MSELoss().to(device)
     scale_loss_func = nn.MSELoss().to(device)
 
-    def loss_fn(model: th.nn.Module, data):
+    def _loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
         image = data[Schema.CROPPED_IMAGE]
         truth_orient = data[Schema.ORIENTATION]
@@ -92,9 +184,6 @@ def main():
         num_obj = len(image)
         loss = 0
         for i in range(num_obj):
-            # TODO(Jiyong): need to fix error("ValueError: only one element
-            # tensors can be converted to Python scalars") for trying
-            # to(device) at above.
             _image = image[i].to(device)
             _truth_orient = th.squeeze(truth_orient[i]).to(device)
             _truth_dim = th.squeeze(truth_dim[i]).to(device)
@@ -102,7 +191,7 @@ def main():
             dim, quat = model(_image)
 
             scale_loss = scale_loss_func(dim, _truth_dim)
-            orient_loss = orientation_loss(quat, _truth_orient)
+            orient_loss = orientation_loss_func(quat, _truth_orient)
 
             loss += opts.alpha * scale_loss + orient_loss
 
@@ -111,8 +200,8 @@ def main():
     trainer = Trainer(opts.train,
                       model,
                       optimizer,
-                      loss_fn,
-                      callbacks,
+                      _loss_fn,
+                      hub,
                       train_loader)
 
     print('======Training Start======')
