@@ -13,8 +13,8 @@ import json
 from simple_parsing import Serializable
 
 import torch as th
-import cv2
-from scipy.spatial.transform import Rotation as R
+import torch.nn.functional as F
+from pytorch3d.transforms import matrix_to_quaternion
 
 from top.data.schema import Schema
 from top.run.box_generator import Box
@@ -94,65 +94,47 @@ class CropObject(object):
     def __call__(self, inputs: dict):
         # Parse inputs
         image = inputs[Schema.IMAGE]
-        class_index = inputs[Schema.CLASS]
         num_object = inputs[Schema.INSTANCE_NUM]
-        num_keypoints = inputs[Schema.KEYPOINT_NUM]
         translation = inputs[Schema.TRANSLATION]
         orientation = inputs[Schema.ORIENTATION]
         scale = inputs[Schema.SCALE]
 
         h, w = image.shape[-2:]
-        keypoints_2d = np.split(inputs[Schema.KEYPOINT_2D], np.array(np.cumsum(num_keypoints)))
-        keypoints_2d = [points.reshape(-1,3) for points in keypoints_2d]
-        keypoints_2d = [np.multiply(keypoint, np.array([w, h, 1.0], np.float32)).astype(int)
-                        for keypoint in keypoints_2d]
+        keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]
+        keypoints_2d = th.as_tensor(keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
+        num_vertices = keypoints_2d.shape[-2]
+        keypoints_2d = keypoints_2d.reshape(-1,num_vertices,3)
         
-        orientation = np.split(orientation, num_object)
-        orientation = [rotation.reshape(-1,3,3) for rotation in orientation]
+        orientation = th.as_tensor(orientation)
+        orientation = orientation.reshape(-1,3,3)
+        quaternions = matrix_to_quaternion(orientation)
 
-        scale = np.split(scale, num_object)
-        scale = [scales.reshape(-1,3) for scales in scale]
+        scale = th.as_tensor(scale)
+        scale = scale.reshape(-1,3)
 
-        translation = np.split(translation, num_object)
-        translation = [translations.reshape(-1,3) for translations in translation]
+        translation = th.as_tensor(translation)
+        translation = translation.reshape(-1,3)
 
-        crop_img = []
-        quaternions = []
-        scale_ = []
-        translation_ = []
-        for object_id in range(num_object):       
-            # NOTE(Jiyong): np.split() leaves an empty array at the end of the list.
-            if keypoints_2d[object_id].size == 0:
-                break
-
-            x_min, y_min, _ = np.min(keypoints_2d[object_id], axis=0)
-            x_max, y_max, _ = np.max(keypoints_2d[object_id], axis=0)
-
-            # NOTE(Jiyong): TypeError: Expected cv::UMat for argument 'src'
-            # -> cv2.Umat() is functionally equivalent to np.float32() & (H,W,C)
-            crop_tmp = np.float32(image[:, y_min:y_max, x_min:x_max])
-            crop_tmp = np.transpose(crop_tmp, (1,2,0))
+        x_min, y_min, _ = th.min(keypoints_2d, dim=1).values
+        x_max, y_max, _ = th.max(keypoints_2d, dim=1).values
+        
+        crop_img = th.empty(num_object, self.opts.crop_img_size, self.opts.crop_img_size)
+        for obj in range(num_object):
+            crop_tmp = image[:, y_min[obj]:y_max[obj], x_min[obj]:x_max[obj]]
+            crop_tmp = th.transpose(crop_tmp, (1,2,0))
             try:
-                crop_tmp = cv2.resize(crop_tmp, dsize=self.opts.crop_img_size)
+                crop_tmp = F.interpolate(crop_tmp, dsize=self.opts.crop_img_size)
             except Exception as e:
                 print(crop_tmp.shape)
                 raise
-
-            crop_tmp = np.transpose(crop_tmp, (2,0,1))
-            crop_img.append(crop_tmp)
-
-            # For quaternions regression
-            r = R.from_matrix(orientation[object_id])
-            quaternions.append(r.as_quat())
-
-            scale_.append(scale[object_id])
-            translation_.append(translation[object_id])
+            crop_tmp = th.transpose(crop_tmp, (2,0,1))
+            crop_img[obj] = crop_tmp
 
         # shallow copy
         outputs = inputs.copy()
-        outputs['crop_img'] = np.stack(crop_img, axis=0)
-        outputs[Schema.TRANSLATION] = translation_
-        outputs[Schema.SCALE] = scale_
+        outputs[Schema.CROPPED_IMAGE] = crop_img
+        outputs[Schema.TRANSLATION] = translation
+        outputs[Schema.SCALE] = scale
         outputs[Schema.ORIENTATION] = quaternions
         outputs[Schema.VISIBILITY] = th.as_tensor(inputs[Schema.VISIBILITY]).reshape(-1,1)
         # print([(k, v.shape) if isinstance(v, th.Tensor) else (k,v) for k,v in outputs.items()])
