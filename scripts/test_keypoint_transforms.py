@@ -14,7 +14,7 @@ from top.data.colored_cube_dataset import ColoredCubeDataset
 from top.data.transforms import (
     BoxHeatmap,
     DrawKeypoints,
-    DrawDisplacementMap,
+    DrawKeypointMap,
     DenseMapsMobilePose,
     InstancePadding,
 )
@@ -39,10 +39,10 @@ def main():
                    DrawKeypoints(DrawKeypoints.Settings()),
                    DenseMapsMobilePose(DenseMapsMobilePose.Settings(), device),
                    InstancePadding(InstancePadding.Settings()),
-                   DrawDisplacementMap(DrawDisplacementMap.Settings(
-                       key_in=Schema.DISPLACEMENT_MAP,
-                       key_out='dmap_vis'
-                   ))
+                   #DrawDisplacementMap(DrawDisplacementMap.Settings(
+                   #    key_in=Schema.DISPLACEMENT_MAP,
+                   #    key_out='dmap_vis'
+                   #))
                    ])
 
     dataset, _ = get_loaders(opts.dataset, device, None, xfm)
@@ -58,12 +58,12 @@ def main():
             save_image(img, F'/tmp/heatmap-{i}.png',
                        normalize=True)
 
-        for i, img in enumerate(data[Schema.DISPLACEMENT_MAP]):
-            save_image(
-                th.where(th.isfinite(img), img.abs(), th.as_tensor(0.0)),
-                F'/tmp/displacement-{i}.png',
-                normalize=True)
-        save_image(data['dmap_vis'], '/tmp/dmap-vis.png')
+        #for i, img in enumerate(data[Schema.DISPLACEMENT_MAP]):
+        #    save_image(
+        #        th.where(th.isfinite(img), img.abs(), th.as_tensor(0.0)),
+        #        F'/tmp/displacement-{i}.png',
+        #        normalize=True)
+        # save_image(data['dmap_vis'], '/tmp/dmap-vis.png')
         break
 
 

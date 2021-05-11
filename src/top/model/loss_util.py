@@ -34,8 +34,9 @@ def _neg_loss(pred: th.Tensor, gt: th.Tensor):
         pred (batch x c x h x w)
         gt_regr (batch x c x h x w)
     """
-    pos_inds = gt.eq(1).float()
-    neg_inds = gt.lt(1).float()
+    pos_mask = (gt == 1)
+    pos_inds = pos_mask.float()
+    neg_inds = (~pos_mask).float()
 
     neg_weights = th.pow(1 - gt, 4)
 

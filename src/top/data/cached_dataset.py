@@ -10,10 +10,8 @@ import torch as th
 
 
 class CachedDataset(th.utils.data.IterableDataset):
-    """
-    Class that memoizes a subset of the given dataset,
-    and retrieves them during runtime from the filesystem cache.
-    """
+    """Class that memoizes a subset of the given dataset, and retrieves them
+    during runtime from the filesystem cache."""
     @dataclass
     class Settings(Serializable):
         cache_dir: str = '~/.cache/ai604/'

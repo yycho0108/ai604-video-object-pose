@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 import torch as th
 from torchvision.transforms import Compose
 from torch.utils.tensorboard import SummaryWriter
+import torch.autograd.profiler as profiler
 
 from top.train.saver import Saver
 from top.train.trainer import Trainer
@@ -49,7 +50,7 @@ class AppSettings(Serializable):
     device: str = ''
 
     # Logging interval / every N train steps
-    log_period: int = int(32)
+    log_period: int = int(100)
 
     # Checkpointing interval / every N train steps
     save_period: int = int(1e3)
@@ -59,6 +60,7 @@ class AppSettings(Serializable):
 
     padding: InstancePadding.Settings = InstancePadding.Settings()
     maps: DenseMapsMobilePose.Settings = DenseMapsMobilePose.Settings()
+    profile: bool = False
 
 
 class TrainLogger:
@@ -106,7 +108,7 @@ class TrainLogger:
             target_kpt_map = self.draw_kpt_map(
                 inputs[Schema.KEYPOINT_HEATMAP][0]).detach()
 
-        # TODO(ycho): denormalize input image.
+        # NOTE(ycho): denormalize input image.
         image = th.clip(0.5 + (input_image[0] * 0.25), 0.0, 1.0)
         self.writer.add_image(
             'train_images',
@@ -167,15 +169,20 @@ def main():
     optimizer = th.optim.Adam(model.parameters(), lr=1e-3)
     writer = th.utils.tensorboard.SummaryWriter(path.log)
 
-    # NOTE(ycho): Forcing data loading on the CPU.
+    # NOTE(ycho): Force data loading on the CPU.
+    data_device = th.device('cpu')
+
     # TODO(ycho): Consider scripted compositions?
+    # If a series of transforms can be fused and compiled,
+    # it would probably make it a lot faster to train...
     transform = Compose([
-        DenseMapsMobilePose(opts.maps, th.device(device)),
+        DenseMapsMobilePose(opts.maps, data_device),
         Normalize(Normalize.Settings()),
         InstancePadding(opts.padding)
     ])
+
     train_loader, test_loader = get_loaders(opts.dataset,
-                                            device=th.device(device),
+                                            device=data_device,
                                             batch_size=opts.batch_size,
                                             transform=transform)
 
@@ -232,7 +239,9 @@ def main():
     # TODO(ycho): Consider folding this callback inside Trainer()
     # and adding {test_loader, eval_fn} args to Trainer instead.
     def _eval_fn(model, data):
-        return model(data[Schema.IMAGE].to(device))
+        # TODO(ycho): Actually implement evaluation function.
+        # return model(data[Schema.IMAGE].to(device))
+        return None
     evaluator = Evaluator(
         Evaluator.Settings(period=opts.eval_period),
         hub, model, test_loader, _eval_fn)
@@ -286,7 +295,19 @@ def main():
         hub,
         train_loader)
 
-    trainer.train()
+    # Train, optionally profile
+    if opts.profile:
+        try:
+            with profiler.profile(record_shapes=True, use_cuda=True) as prof:
+                trainer.train()
+        finally:
+            print(
+                prof.key_averages().table(
+                    sort_by='cpu_time_total',
+                    row_limit=16))
+            prof.export_chrome_trace("/tmp/trace.json")
+    else:
+        trainer.train()
 
 
 if __name__ == '__main__':

@@ -31,6 +31,7 @@ NUM_KEYPOINTS = 9
 
 
 def _glob_objectron(bucket_name: str, prefix: str):
+    """ prefix = google cloud storage bucket glob prefix """
     client = storage.Client.create_anonymous_client()
     blobs = client.list_blobs(bucket_name, prefix=prefix)
     return [blob.name for blob in blobs]
@@ -53,15 +54,16 @@ def decode(example, feature_names: List[str] = []):
     visibility = example['object/visibility'].reshape(num_instances, 1)
 
     out = {
-        Schema.IMAGE: image,
-        Schema.KEYPOINT_2D: points,
+        Schema.IMAGE: th.as_tensor(image),
+        Schema.KEYPOINT_2D: th.as_tensor(points),
         Schema.INSTANCE_NUM: num_instances,
-        Schema.TRANSLATION: translation,
-        Schema.ORIENTATION: orientation,
-        Schema.SCALE: scale,
-        Schema.PROJECTION: example['camera/projection'],
+        Schema.TRANSLATION: th.as_tensor(translation),
+        Schema.ORIENTATION: th.as_tensor(orientation),
+        Schema.SCALE: th.as_tensor(scale),
+        Schema.PROJECTION: th.as_tensor(example['camera/projection']),
         Schema.KEYPOINT_NUM: num_keypoints,
-        Schema.VISIBILITY: visibility
+        Schema.VISIBILITY: visibility,
+        Schema.CLASS: bytes(example['object/name']).decode()
     }
 
     out.update({k: example[k] for k in feature_names})
@@ -69,8 +71,8 @@ def decode(example, feature_names: List[str] = []):
 
 
 class ObjectronDetection(th.utils.data.IterableDataset):
-    """
-    Objectron dataset.
+    """Objectron dataset.
+
     TODO(ycho): Rename to `ObjectronDetection`.
     """
 
@@ -108,7 +110,8 @@ class ObjectronDetection(th.utils.data.IterableDataset):
             'camera/intrinsics',
             'camera/projection',
         )
-        cache_dir = '~/.cache/ai604/'
+        cache_dir: str = '~/.cache/ai604/'
+        local: bool = True
 
     def __init__(self, opts: Settings, train: bool = True, transform=None):
         self.opts = opts
@@ -119,9 +122,11 @@ class ObjectronDetection(th.utils.data.IterableDataset):
         self._index_map = {c: i for i, c in enumerate(self.opts.classes)}
         self._class_map = {i: c for i, c in enumerate(self.opts.classes)}
 
-        # hmm
-        self.client = storage.Client.create_anonymous_client()
-        self.bucket = self.client.bucket(self.opts.bucket_name)
+        # Conditionally instantiate google cloud storage bucket interface.
+        self.bucket = None
+        if not self.opts.local:
+            client = storage.Client.create_anonymous_client()
+            self.bucket = client.bucket(self.opts.bucket_name)
 
     def _index_from_class(self, cls: str):
         return self._index_map[cls]
@@ -130,21 +135,29 @@ class ObjectronDetection(th.utils.data.IterableDataset):
         return self._class_map[idx]
 
     def _get_shards(self):
-        """ return list of shards, potentially memoized for efficiency """
-        prefix = 'train' if self.train else 'test'
-        # FIXME(ycho): hardcoded {prefix}-det-shards
-        shards_cache = F'{self.opts.cache_dir}/{prefix}-det-shards.pkl'
-
-        shards_path = Path(shards_cache).expanduser()
-        if not shards_path.exists():
-            shards_path.parent.mkdir(parents=True, exist_ok=True)
-            shards = self._glob()
-            with open(str(shards_path), 'wb') as f:
-                pickle.dump(shards, f)
+        """return list of shards, potentially memoized for efficiency."""
+        train_type = 'train' if self.train else 'test'
+        if self.opts.local:
+            # FIXME(ycho): hardcoded {cache_dir}/objectron-{train_type}/...
+            # shards
+            root = Path(
+                self.opts.cache_dir).expanduser() / F'objectron-{train_type}'
+            shards = list(root.glob('*'))
         else:
-            with open(str(shards_path), 'rb') as f:
-                shards = pickle.load(f)
+            # FIXME(ycho): hardcoded {train_type}-det-shards
+            shards_cache = F'{self.opts.cache_dir}/{train_type}-det-shards.pkl'
 
+            shards_path = Path(shards_cache).expanduser()
+            if not shards_path.exists():
+                shards_path.parent.mkdir(parents=True, exist_ok=True)
+                shards = self._glob()
+                with open(str(shards_path), 'wb') as f:
+                    pickle.dump(shards, f)
+            else:
+                with open(str(shards_path), 'rb') as f:
+                    shards = pickle.load(f)
+
+        # NOTE(ycho): `numpy` not strictly needed here.
         if self.opts.shuffle_shards:
             np.random.shuffle(shards)
         return shards
@@ -161,51 +174,60 @@ class ObjectronDetection(th.utils.data.IterableDataset):
         return shards
 
     def __iter__(self):
+        train_type = 'train' if self.train else 'test'
+
+        # Distribute shards among interleaved workers.
         worker_info = th.utils.data.get_worker_info()
         if worker_info is None:
             i0 = 0
-            i1 = len(self.shards)
+            step = 1
         else:
-            n = int(np.ceil(len(self.shards) / float(worker_info.num_workers)))
-            i0 = worker_info.id * n
-            i1 = min(len(self.shards), i0 + n)
+            i0 = worker_info.id
+            step = worker_info.num_workers
 
-        # Contiguous block slice among shards.
-        for shard in self.shards[i0:i1]:
-            blob = self.bucket.blob(shard)
-
+        for shard in self.shards[i0::step]:
             # Download blob and parse tfrecord.
             # TODO(ycho): Consider downloading in the background.
-            content = blob.download_as_bytes()
-            with io.BytesIO(content) as fp:
+
+            fp = None
+            try:
+                if self.opts.local:
+                    # Load local shard.
+                    fp = open(str(shard), 'rb')
+                else:
+                    # Load shard from remote GS bucket.
+                    blob = self.bucket.blob(shard)
+                    content = blob.download_as_bytes()
+                    fp = io.BytesIO(content)
+
                 reader = tfrecord_loader(fp, None,
                                          self.opts.features, None)
-
-                # Parse class name from the shard name.
-                # This is to avoid awkward string conversion later.
-                class_name = shard.split('/')[-2]
-                class_index = self._index_from_class(class_name)
 
                 for i, example in enumerate(reader):
                     # Decode example into features format ...
                     features = decode(example)
 
-                    # Add class information.
+                    # Broadcast class information.
                     features[Schema.CLASS] = th.full(
-                        (int(features[Schema.INSTANCE_NUM]),), class_index)
+                        (int(features[Schema.INSTANCE_NUM]),),
+                        self._index_from_class(features[Schema.CLASS]))
 
                     # Transform output and return.
                     output = features
                     if self.xfm:
                         output = self.xfm(output)
                     yield output
+            finally:
+                # Ensure that the `fp` resource is properly released.
+                if fp is not None:
+                    fp.close()
 
 
 class SampleObjectron(th.utils.data.IterableDataset):
-    """
-    Class that behaves exactly like `Objectron`, except
-    this class loads from a locally cached data, for convenience.
-    Prefer this class for testing / validation / EDA.
+    """Class that behaves exactly like `Objectron`, except this class loads
+    from a locally cached data, for convenience. Prefer this class for testing.
+
+    / validation / EDA.
 
     @see CachedDataset, Objectron.
     """
@@ -214,17 +236,17 @@ class SampleObjectron(th.utils.data.IterableDataset):
         cache: CachedDataset.Settings = CachedDataset.Settings()
         objectron: ObjectronDetection.Settings = ObjectronDetection.Settings()
 
-    def __init__(self, opts: Settings, transform=None):
+    def __init__(self, opts: Settings, train: bool = True, transform=None):
         self.opts = opts
         # NOTE(ycho): delegate most of the heavy lifting
         # to `CachedDataset`.
-        prefix = 'train' if self.opts.objectron.train else 'test'
-        # FIXME(ycho): hardcoded {prefix}-det-sample
+        train_type = 'train' if train else 'test'
+        # FIXME(ycho): hardcoded {train_type}-det-sample
         self.dataset = CachedDataset(
             opts.cache,
             lambda: ObjectronDetection(
-                self.opts.objectron),
-            F'{prefix}-det-sample',
+                self.opts.objectron, train),
+            F'{train_type}-det-sample',
             transform=transform)
         self.xfm = transform
 
