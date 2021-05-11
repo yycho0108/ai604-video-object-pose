@@ -6,8 +6,8 @@ from simple_parsing import Serializable
 # NOTE(ycho): Required for dealing with `enum` registration
 from simple_parsing.helpers.serialization import encode, register_decoding_fn
 import torch as th
-
 from top.data.colored_cube_dataset import ColoredCubeDataset
+
 from top.data.objectron_sequence import ObjectronSequence
 from top.data.objectron_detection import ObjectronDetection
 from top.data.cached_dataset import CachedDataset

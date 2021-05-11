@@ -115,19 +115,13 @@ class CropObject(object):
         translation = th.as_tensor(translation)
         translation = translation.reshape(-1,3)
 
-        x_min, y_min, _ = th.min(keypoints_2d, dim=1).values
-        x_max, y_max, _ = th.max(keypoints_2d, dim=1).values
+        point_min = th.min(keypoints_2d, dim=1).values
+        point_max = th.max(keypoints_2d, dim=1).values
         
-        crop_img = th.empty(num_object, self.opts.crop_img_size, self.opts.crop_img_size)
+        crop_img = th.empty(num_object, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
         for obj in range(num_object):
-            crop_tmp = image[:, y_min[obj]:y_max[obj], x_min[obj]:x_max[obj]]
-            crop_tmp = th.transpose(crop_tmp, (1,2,0))
-            try:
-                crop_tmp = F.interpolate(crop_tmp, dsize=self.opts.crop_img_size)
-            except Exception as e:
-                print(crop_tmp.shape)
-                raise
-            crop_tmp = th.transpose(crop_tmp, (2,0,1))
+            crop_tmp = image[:, int(point_min[obj][1]):int(point_max[obj][1]), int(point_min[obj][0]):int(point_max[obj][0])]
+            crop_tmp = F.interpolate(crop_tmp, size=self.opts.crop_img_size[0])
             crop_img[obj] = crop_tmp
 
         # shallow copy
@@ -140,3 +134,5 @@ class CropObject(object):
         # print([(k, v.shape) if isinstance(v, th.Tensor) else (k,v) for k,v in outputs.items()])
 
         return outputs
+
+# FIXME(Jiyong): split class -> crop / resize(built-in) / collate_fn

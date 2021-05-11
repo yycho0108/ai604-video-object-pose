@@ -14,24 +14,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.utils import save_image
 
-from pytorch3d.io import load_objs_as_meshes
-from pytorch3d.structures import Pointclouds, Meshes
-from pytorch3d.transforms.transform3d import Transform3d
-from pytorch3d.renderer import (
-    look_at_view_transform,
-    FoVPerspectiveCameras,
-    PointsRasterizationSettings,
-    PointsRenderer,
-    PointsRasterizer,
-    MeshRenderer,
-    MeshRasterizer,
-    RasterizationSettings,
-    SoftPhongShader,
-    PointLights,
-    AlphaCompositor,
-    TexturesVertex
-)
-
+try:
+    from pytorch3d.structures import Pointclouds
+    from pytorch3d.transforms.transform3d import Transform3d
+    from pytorch3d.renderer import (
+        look_at_view_transform,
+        FoVPerspectiveCameras,
+        PointsRasterizationSettings,
+        PointsRenderer,
+        PointsRasterizer,
+        AlphaCompositor,
+    )
+except ImportError:
+    print('welp')
 from top.run.torch_util import resolve_device
 from top.run.app_util import update_settings
 from top.data.schema import Schema
