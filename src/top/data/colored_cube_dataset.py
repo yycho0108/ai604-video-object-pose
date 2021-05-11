@@ -38,10 +38,8 @@ from top.data.schema import Schema
 
 
 class ColoredCubeDataset(th.utils.data.IterableDataset):
-    """
-    Toy generative dataset for 3D object detection:
-    vertices of an oriented unit cube rendered as a point cloud.
-    Intended to be an "easy" baseline.
+    """Toy generative dataset for 3D object detection: vertices of an oriented
+    unit cube rendered as a point cloud. Intended to be an "easy" baseline.
 
     # FIXME(ycho): I realized that the cube length is actually 2
     """
@@ -138,9 +136,8 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
         return renderer
 
     def _get_cube_cloud(self):
-        """
-        Get vertices of a unit-cube, with colors assigned according to vertex coordinates.
-        """
+        """Get vertices of a unit-cube, with colors assigned according to
+        vertex coordinates."""
         vertices = list(itertools.product(
             *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))
         vertices = np.insert(vertices, 0, [0, 0, 0], axis=0)
@@ -187,10 +184,10 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
         return mesh
 
     def _render(self):
-        """
-        Render the unit cube at various camera poses.
-        We deliberately sample the camera poses such that all vertices of the cube
-        are always in view.
+        """Render the unit cube at various camera poses.
+
+        We deliberately sample the camera poses such that all vertices
+        of the cube are always in view.
         """
         opts = self.opts
 
@@ -304,7 +301,7 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
                 Schema.INSTANCE_NUM: th.ones(
                     self.opts.batch_size,
                     device=self.device),
-                Schema.PROJECTION: projection,
+                Schema.PROJECTION: projection.repeat(self.opts.batch_size, 1, 1),
             }
 
             # Unstack the batched render into a set of images, for compatibility with Objectron.
@@ -322,12 +319,13 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
 
 
 def main():
-    opts = ColoredCubeDataset.Settings(batch_size=4)
+    opts = ColoredCubeDataset.Settings(batch_size=32, unstack = False)
     opts = update_settings(opts)
 
     device = resolve_device()
     dataset = ColoredCubeDataset(opts, device,)
     for data in dataset:
+        print({k:v.shape for k,v in data.items()})
         save_image(data[Schema.IMAGE] / 255.0, F'/tmp/img.png')
         break
 

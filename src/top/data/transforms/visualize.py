@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""
-Set of transforms related to visualization.
-"""
+"""Set of transforms related to visualization."""
 
-__all__ = ['DrawKeypoints', 'DrawDisplacementMap']
+__all__ = ['DrawKeypoints', 'DrawKeypointMap']
 
 import itertools
 from dataclasses import dataclass
@@ -19,8 +17,8 @@ from top.data.schema import Schema
 
 
 class DrawKeypoints:
-    """
-    Draw keypoints (as inputs['points']) on an image as-is.
+    """Draw keypoints (as inputs['points']) on an image as-is.
+
     Mostly intended for debugging.
     """
 
@@ -60,13 +58,14 @@ class DrawKeypoints:
         return outputs
 
 
-class DrawDisplacementMap:
+class DrawKeypointMap:
 
     @dataclass
     class Settings(Serializable):
         sigma: float = 0.1
         key_in: str = ''
         key_out: str = ''
+        as_displacement: bool = True
 
     def __init__(self, opts: Settings):
         self.opts = opts
@@ -80,40 +79,50 @@ class DrawDisplacementMap:
         self.colors = colors  # 9x3
 
     def __call__(self, inputs: th.Tensor) -> th.Tensor:
-        """
-        Provide visualization of displacement map ...
-        """
+        """Provide visualization of keypoint map ..."""
 
         # Parse inputs.
         if self.opts.key_in and isinstance(inputs, dict):
-            displacement_map = inputs[self.opts.key_in]
+            kpt_map = inputs[self.opts.key_in]
         else:
-            displacement_map = inputs
+            kpt_map = inputs
 
-        # NOTE(ycho): convert displacement maps to weight,
-        # where low displacement == high visual weight
-        displacement_map = displacement_map.view(-1,
-                                                 displacement_map.shape[-3] // 2,
-                                                 2,
-                                                 displacement_map.shape[-2],
-                                                 displacement_map.shape[-1])
-        distance_map = th.norm(displacement_map, dim=-3)
-        mask = th.isfinite(distance_map)
-        denom = (2 * self.opts.sigma * self.opts.sigma)
-        vis_weights = th.where(
-            mask, th.exp(-distance_map / denom),
-            th.as_tensor(0.0, device=mask.device)
-        )
-        vis = th.einsum(
+        if self.opts.as_displacement:
+            displacement_map = kpt_map
+
+            # NOTE(ycho): convert displacement maps to weight,
+            # where low displacement == high visual weight
+            displacement_map = displacement_map.view(-1,
+                                                     displacement_map.shape[-3] // 2,
+                                                     2,
+                                                     displacement_map.shape[-2],
+                                                     displacement_map.shape[-1])
+            distance_map = th.norm(displacement_map, dim=-3)
+            mask = th.isfinite(distance_map)
+            denom = (2 * self.opts.sigma * self.opts.sigma)
+
+            # NOTE(ycho) exponentiated distance ~ heatmap
+            kpt_heatmap = th.where(
+                mask, th.exp(-distance_map / denom),
+                th.as_tensor(0.0, device=mask.device)
+            )
+        else:
+            kpt_heatmap = kpt_map
+
+        # NOTE(ycho): Produce per-keypoint colored heatmap
+        # into a single (slightly ambiguous) visualization.
+        # print(kpt_heatmap.shape)  # (1,64,64...??)
+        # print(self.colors.shape)
+        colored_heatmap = th.einsum(
             '...khw, kc -> ...chw',
-            vis_weights,
+            kpt_heatmap,
             self.colors.to(
-                vis_weights.device))
+                kpt_heatmap.device))
 
         # Format outputs.
         if self.opts.key_out and isinstance(inputs, dict):
             outputs = inputs.copy()
-            outputs[self.opts.key_out] = vis
+            outputs[self.opts.key_out] = colored_heatmap
         else:
-            outputs = vis
+            outputs = colored_heatmap
         return outputs

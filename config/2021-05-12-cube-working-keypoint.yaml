@@ -1,0 +1,105 @@
+batch_size: 32
+dataset:
+  cache:
+    cache_dir: ~/.cache/ai604/
+    force_rebuild: false
+    num_samples: 8
+  cube:
+    aspect: 1.0
+    batch_size: 32
+    fov: 60
+    image_size:
+    - 256
+    - 256
+    max_distance: 10.0
+    min_distance: 0.1
+    unstack: true
+    use_mesh: true
+    zfar: 100.0
+    znear: 0.1
+  dataset: CUBE
+  num_workers: 0
+  objectron:
+    bucket_name: objectron
+    classes:
+    - bike
+    - book
+    - bottle
+    - camera
+    - cereal_box
+    - chair
+    - cup
+    - laptop
+    - shoe
+    context:
+    - count
+    - sequence_id
+    features:
+    - instance_num
+    - image/width
+    - image/height
+    - image/channels
+    - image/encoded
+    - object/name
+    - object/translation
+    - object/orientation
+    - object/scale
+    - point_3d
+    - point_2d
+    - point_num
+    - camera/intrinsics
+    - camera/projection
+    shuffle_shards: true
+  shuffle: false
+  use_cached_dataset: false
+device: ''
+eval_period: 1000
+log_period: 32
+maps:
+  downsample: 4
+  in_place: true
+  kernel_size: 9
+  num_class: 1
+  sigma: 3.0
+  use_displacement: false
+model:
+  backbone_name: resnet50
+  center:
+    hidden:
+    - 128
+    num_class: 1
+  keypoint:
+    heatmap:
+      hidden:
+      - 128
+      num_class: 9
+    kernel_size: 3
+    num_keypoints: 9
+  num_trainable_layers: 0
+  returned_layers:
+  - 4
+  soft_sigmoid_eps: 0.0001
+  upsample:
+    kernel_size: 4
+  upsample_steps:
+  - 128
+  - 64
+  - 16
+padding:
+  max_num_inst: 1
+  pad_keys:
+  - point_2d
+  - point_3d
+  - object/translation
+  - object/orientation
+  - object/scale
+  - object/class
+  - point_num
+path:
+  key: ''
+  key_format: run-{:03d}
+  root: /tmp/ai604-kpt
+save_period: 1000
+train:
+  num_epochs: 8
+  train_steps: 10000

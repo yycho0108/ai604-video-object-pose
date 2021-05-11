@@ -58,9 +58,8 @@ def get_dataset(opts: DatasetSettings, train: bool,
         dataset = ColoredCubeDataset(opts.cube, device, transform)
     elif opts.dataset == DatasetOptions.OBJECTRON:
         # NOTE(ycho): Ignores `device` argument.
-        data_opts = opts.objectron
-        data_opts = replace(data_opts, train=train)
-        dataset = ObjectronDetection(data_opts, transform)
+        dataset = ObjectronDetection(
+            opts.objectron, train=train, transform=transform)
     else:
         raise ValueError(F'Invalid dataset choice : {opts.dataset} not found!')
     return dataset

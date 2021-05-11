@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Set of transforms related to keypoints.
-"""
+"""Set of transforms related to keypoints."""
 
 __all__ = ['DenseMapsMobilePose', 'BoxHeatmap']
 
@@ -19,8 +17,8 @@ from top.data.schema import Schema
 
 
 class DenseMapsMobilePose:
-    """
-    Create dense heatmaps and displacement fields from
+    """Create dense heatmaps and displacement fields from.
+
     projected object keypoints - in the style of `MobilePose`.
 
     `heatmap`: an estimate of the object distribution with a
@@ -43,6 +41,8 @@ class DenseMapsMobilePose:
         # [h,w] -> [h//d,w//d]. Note that kernel_size is unaffected.
         downsample: int = 4
 
+        use_displacement: bool = False
+
     def __init__(self, opts: Settings, device: th.device):
         self.opts = opts
         self.device = device
@@ -50,30 +50,31 @@ class DenseMapsMobilePose:
         # Precompute relevant kernels.
         self.gauss_kernel = self._compute_gaussian_kernel(self.opts,
                                                           self.device)
-        self.displacement_kernel = self._compute_displacement_kernel(
-            self.opts, self.device)
+        self.displacement_kernel = None
+        if opts.use_displacement:
+            self.displacement_kernel = self._compute_displacement_kernel(
+                self.opts, self.device)
 
     @staticmethod
     def _compute_gaussian_kernel(opts: Settings, device: th.device):
-        """
-        Compute a gaussian kernel with the given kernel size and standard deviation.
-        """
+        """Compute a gaussian kernel with the given kernel size and standard
+        deviation."""
         delta = th.arange(
             opts.kernel_size,
             device=device) - opts.kernel_size // 2
 
         gauss_1d = th.exp_(-th.square_(delta) / (2.0 * opts.sigma**2))
-        # NOTE(ycho): divide by max instead of sum.
-        gauss_1d /= gauss_1d.max()
+        # NOTE(ycho): Don't divide by sum...
+        # gauss_1d /= gauss_1d.sum()
         out = gauss_1d[None, :] * gauss_1d[:, None]
         return out
 
     @staticmethod
     def _compute_displacement_kernel(opts: Settings, device: th.device):
-        """
-        Compute a displacement kernel with the given kernel size.
-        Note that the output ordering is (major,minor) == (i,j),
-        with shape (2,k,k). We generally try to stick with this convention.
+        """Compute a displacement kernel with the given kernel size.
+
+        Note that the output ordering is (major,minor) == (i,j), with
+        shape (2,k,k). We generally try to stick with this convention.
         """
         delta = th.arange(
             opts.kernel_size,
@@ -82,10 +83,8 @@ class DenseMapsMobilePose:
 
     @staticmethod
     def _compute_adjusted_roi(x: int, y: int, h: int, w: int, r: int):
-        """
-        Compute parameters of a sub-window within bounds of the specified
-        symmetric rectangle {y+-r,x+-r} that is within range {0-h, 0-w}.
-        """
+        """Compute parameters of a sub-window within bounds of the specified
+        symmetric rectangle {y+-r,x+-r} that is within range {0-h, 0-w}."""
 
         # Compute symmetric box extents.
         roi_i00 = y - r
@@ -125,44 +124,32 @@ class DenseMapsMobilePose:
         keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]  # (O, 9, 2|3)
 
         h, w = image.shape[-2:]
+        # NOTE(ycho): number of distinct keypoint classes.
+        # Asssumes `keypoints_2d_uv` is formatted as [..., NUM_KPT, DIM_KPT].
+        num_vertices = keypoints_2d_uv.shape[-2]
 
         # NOTE(ycho): Apply downsampling relative to original shape.
+        # From this point onwards, we change the value of `h` / `w`.
         h = h // self.opts.downsample
         w = w // self.opts.downsample
 
-        keypoints_2d = th.as_tensor(
-            keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
+        keypoints_2d = (th.as_tensor(keypoints_2d_uv) *
+                        th.as_tensor([w, h, 1.0], device=keypoints_2d_uv.device))
 
         # TODO(ycho): Resolve ambiguous naming convention.
         num_inst = inputs[Schema.INSTANCE_NUM]
 
-        # FIXME(ycho): CANNOT deal with batch inputs after this line.
+        # FIXME(ycho): Because we explicitly refer to
+        # a scalar `num_inst`, we cannot process batch inputs after this line.
         n = int(num_inst)
 
-        # HEATMAPS for PER_OBJECT CENTERS
+        # Heatmaps for per-object centers...
         shape = list(image.shape[:-3]) + [self.opts.num_class, h, w]
         heatmap = th.zeros(shape, dtype=th.float32, device=self.device)
 
-        # NOTE(ycho): number of distinct keypoint classes,
-        # 2X to account for offsets in {+i,+j} directions,
-        num_vertices = keypoints_2d.shape[-2]
-        shape[-3] = 2 * num_vertices
-
-        # FIXME(ycho): OK-ish to initialize as ones since normalized?
-        displacement_map = th.full(
-            shape,
-            fill_value=float('inf'),
-            dtype=th.float32, device=self.device)
-
-        # Compute on-the-fly normalized displacement/distance kernels.
-        # TODO(ycho): Technically, not the efficient way to achieve this.
-        image_scale = th.as_tensor([h, w], device=self.device)[:, None, None]
-        normalized_displacement = self.displacement_kernel / image_scale
-        distance = normalized_displacement.square().sum(dim=0)
-
-        k = self.opts.kernel_size
         # NOTE(ycho): In order for `r` to be fair and symmetric,
         # `opts.kernel_size` has to be an odd integer.
+        k = self.opts.kernel_size
         r = self.opts.kernel_size // 2
 
         # Process each object instance in the image.
@@ -191,10 +178,67 @@ class DenseMapsMobilePose:
                     off_i00: k + off_i01,
                     off_i10: k + off_i11]
                 roi[...] = roi.maximum(ker)
+            outputs[Schema.HEATMAP] = heatmap
 
+        if self.opts.use_displacement:
+            # NOTE(ycho): 2X to account for offsets in {+i,+j} directions,
+            shape = list(image.shape[:-3]) + [2 * num_vertices, h, w]
+
+            # FIXME(ycho): OK-ish to initialize as ones since normalized?
+            displacement_map = th.full(
+                shape,
+                fill_value=float('inf'),
+                dtype=th.float32, device=self.device)
+
+            # Compute on-the-fly normalized displacement/distance kernels.
+            # TODO(ycho): Technically, not the efficient way to achieve this.
+            image_scale = th.as_tensor([h, w], device=self.device)[
+                :, None, None]
+            normalized_displacement = self.displacement_kernel / image_scale
+            distance = normalized_displacement.square().sum(dim=0)
+
+            for i_obj in range(n):
+                # Process vertices ...
+                vertices = keypoints_2d[i_obj, :, :2]
+                for i, (x, y) in enumerate(vertices):
+                    i0, i1 = int(y), int(x)
+                    i_roi, i_off = self._compute_adjusted_roi(i1, i0, h, w, r)
+
+                    if np.any(np.abs(i_off) > r):
+                        continue
+                    (box_i00, box_i01, box_i10, box_i11) = i_roi
+                    (off_i00, off_i01, off_i10, off_i11) = i_off
+
+                    # Update displacement map (cwise min, closest)
+                    roi = displacement_map[..., i * 2: i * 2 + 2,
+                                           box_i00 + off_i00:box_i01 + off_i01,
+                                           box_i10 + off_i10:box_i11 + off_i11]
+                    ker = normalized_displacement[...,
+                                                  off_i00: k + off_i01,
+                                                  off_i10: k + off_i11]
+
+                    # Since we need to update both coordinates simultaneously,
+                    # select the relevant region based on mask and perform explicit
+                    # update.
+                    msk = (
+                        roi.square().sum(dim=-3) >
+                        distance[off_i00: k + off_i01, off_i10: k + off_i11])
+                    roi[..., msk] = ker[..., msk]
+            outputs[Schema.DISPLACEMENT_MAP] = displacement_map
+
+        shape = list(image.shape[:-3]) + [num_vertices, h, w]
+        kpt_heatmap = th.zeros(
+            shape,
+            dtype=th.float32,
+            device=self.device)
+
+        for i_obj in range(n):
             # Process vertices ...
+            # TODO(ycho): either `r`, `sigma` or both should be
+            # inversely proportional to `depth`,
+            # where depth ~ inputs[Schema.TRANSLATION].norm() ...
             vertices = keypoints_2d[i_obj, :, :2]
-            for i, (x, y) in enumerate(vertices):
+            for i_kpt, (x, y) in enumerate(vertices):
                 i0, i1 = int(y), int(x)
                 i_roi, i_off = self._compute_adjusted_roi(i1, i0, h, w, r)
 
@@ -204,29 +248,21 @@ class DenseMapsMobilePose:
                 (off_i00, off_i01, off_i10, off_i11) = i_off
 
                 # Update displacement map (cwise min, closest)
-                roi = displacement_map[..., i * 2: i * 2 + 2,
-                                       box_i00 + off_i00:box_i01 + off_i01,
-                                       box_i10 + off_i10:box_i11 + off_i11]
-                ker = normalized_displacement[...,
-                                              off_i00: k + off_i01,
-                                              off_i10: k + off_i11]
+                roi = kpt_heatmap[..., i_kpt,
+                                  box_i00 + off_i00:box_i01 + off_i01,
+                                  box_i10 + off_i10:box_i11 + off_i11]
+                ker = self.gauss_kernel[...,
+                                        off_i00: k + off_i01,
+                                        off_i10: k + off_i11]
+                roi[...] = roi.maximum(ker)
 
-                # Since we need to update both coordinates simultaneously,
-                # select the relevant region based on mask and perform explicit
-                # update.
-                msk = (roi.square().sum(dim=- 3)
-                       > distance[off_i00: k + off_i01, off_i10: k + off_i11])
-                roi[..., msk] = ker[..., msk]
-
-        outputs[Schema.HEATMAP] = heatmap
-        outputs[Schema.DISPLACEMENT_MAP] = displacement_map
+            outputs[Schema.KEYPOINT_HEATMAP] = kpt_heatmap
 
         return outputs
 
 
 class BoxHeatmap:
-    """
-    Legacy implementation for heatmap computation from object bounding box.
+    """Legacy implementation for heatmap computation from object bounding box.
 
     NOTE(ycho): Currently left here for archival purposes for referring to the
     explicit stages of the transform that the object parameter
