@@ -104,7 +104,10 @@ class CropObject(object):
 
         h, w = image.shape[-2:]
         keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]
-        keypoints_2d = th.as_tensor(keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
+
+        # clamp for the case that keypoints is in out of image
+        keypoints_2d_clamp = th.clamp(th.as_tensor(keypoints_2d_uv), min=0, max=1)
+        keypoints_2d = th.as_tensor(keypoints_2d_clamp) * th.as_tensor([w, h, 1.0])
         num_vertices = keypoints_2d.shape[-2]
         keypoints_2d = keypoints_2d.reshape(-1,num_vertices,3)
         
@@ -123,8 +126,26 @@ class CropObject(object):
         
         crop_img = th.empty(num_object, 3, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
         for obj in range(num_object):
+            # FIXME(Jiyion): Why is there a case where all keypoints are negative?
+            crop_w = int(point_max[obj][0]) - int(point_min[obj][0])
+            crop_h = int(point_max[obj][1]) - int(point_min[obj][1])
+            if crop_w <= 0 or crop_h <= 0:
+                print(keypoints_2d[obj])
+                print(keypoints_2d_uv)
+                print(num_object)
+                with open('/tmp/wtf.pkl', 'wb') as fp:
+                    dbg = inputs[Schema.IMAGE].cpu().numpy()
+                    pickle.dump(dbg, fp)
+                continue
+            
             crop_tmp = image[:, int(point_min[obj][1]):int(point_max[obj][1]), int(point_min[obj][0]):int(point_max[obj][0])]
-            crop_tmp = resize(crop_tmp, size=self.opts.crop_img_size)
+            try:
+                crop_tmp = resize(crop_tmp, size=self.opts.crop_img_size)
+            except RuntimeError:
+                print(point_min[obj][1], point_max[obj][1], point_min[obj][0], point_max[obj][0])
+                print(keypoints_2d_uv)
+                print(keypoints_2d_clamp)
+                print(keypoints_2d)
             crop_img[obj] = crop_tmp
 
         # shallow copy

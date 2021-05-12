@@ -16,7 +16,7 @@ import torch as th
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose
-from top.data.transforms.common import InstancePadding
+from top.data.transforms.common import InstancePadding, Normalize
 
 from top.train.trainer import Trainer
 from top.train.trainer import Saver
@@ -43,11 +43,11 @@ class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
-    train: Trainer.Settings = Trainer.Settings(train_steps=1)
+    train: Trainer.Settings = Trainer.Settings(train_steps=100)
     # FIXME(Jiyong): need to test padding for batch
-    batch_size: int = 2
+    batch_size: int = 8
     alpha: float = 0.5
-    device: str = 'cpu'
+    device: str = 'cuda'
     log_period: int = 32
     save_period: int = 100
     eval_period: int = 100
@@ -106,10 +106,12 @@ def main():
 
     device = resolve_device(opts.device)
     model = BoundingBoxRegressionModel(opts.model).to(device)
-    optimizer = th.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = th.optim.Adam(model.parameters(), lr=1e-5)
     writer = SummaryWriter(path.log)
 
-    transform = Compose([CropObject(CropObject.Settings()),])
+    transform = Compose([CropObject(CropObject.Settings()),
+                         Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,))),
+                         InstancePadding(opts.padding)])
     train_loader, test_loader = get_loaders(opts.dataset,
                                             device=th.device('cpu'),
                                             batch_size=opts.batch_size,
@@ -155,7 +157,8 @@ def main():
     # TODO(ycho): Consider folding this callback inside Trainer()
     # and adding {test_loader, eval_fn} args to Trainer instead.
     def _eval_fn(model, data):
-        return model(data[Schema.IMAGE].to(device))
+        crop_img = data[Schema.CROPPED_IMAGE].view(-1, 3, 224, 224)
+        return model(crop_img.to(device))
     evaluator = Evaluator(
         Evaluator.Settings(period=opts.eval_period),
         hub, model, test_loader, _eval_fn)
@@ -175,13 +178,14 @@ def main():
         pass
     hub.subscribe(Topic.METRICS, _log_all)
 
-    orientation_loss_func = nn.MSELoss().to(device)
-    scale_loss_func = nn.MSELoss().to(device)
+    orientation_loss_func = nn.L1Loss().to(device)
+    scale_loss_func = nn.L1Loss().to(device)
 
     def _loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
         # TODO(Jiyong): chage to collate_fn
         image = data[Schema.CROPPED_IMAGE].to(device)
+        # image = image * (1.0/255.0) - 0.5
         _, _, c, h, w = image.shape
         image = image.view(-1, c, h, w)
         truth_orient = data[Schema.ORIENTATION].to(device)
@@ -189,10 +193,22 @@ def main():
         truth_dim = data[Schema.SCALE].to(device)
         truth_dim = truth_dim.view(-1,3)
 
+        # dim, quat = model(image)
+        # scale_loss = scale_loss_func(dim, truth_dim)
+        # orient_loss = orientation_loss_func(quat, truth_orient)
+        # loss = opts.alpha * scale_loss + orient_loss
+        
         dim, quat = model(image)
-
+        print('...')
+        print(image.max())
+        print(truth_dim.max())
+        print(truth_orient.max())
+        print(dim.max())
+        print(quat.max())
         scale_loss = scale_loss_func(dim, truth_dim)
+        print(scale_loss)
         orient_loss = orientation_loss_func(quat, truth_orient)
+        print(orient_loss)
         loss = opts.alpha * scale_loss + orient_loss
 
         return loss
