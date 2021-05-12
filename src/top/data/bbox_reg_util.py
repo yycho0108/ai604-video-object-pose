@@ -10,6 +10,7 @@ from typing import Tuple
 import numpy as np
 import os
 import json
+import copy
 from simple_parsing import Serializable
 
 import torch as th
@@ -101,16 +102,21 @@ class CropObject(object):
         translation = inputs[Schema.TRANSLATION]
         orientation = inputs[Schema.ORIENTATION]
         scale = inputs[Schema.SCALE]
+        visibility = inputs[Schema.VISIBILITY]
 
-        h, w = image.shape[-2:]
+        c, h, w = image.shape[:]
         keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]
+
+        
+        keypoints_2d = th.as_tensor(keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
+        num_vertices = keypoints_2d.shape[-2]
+        keypoints_2d = keypoints_2d.reshape(-1,num_vertices,3)
 
         # clamp for the case that keypoints is in out of image
         keypoints_2d_clamp = th.clamp(th.as_tensor(keypoints_2d_uv), min=0, max=1)
-        keypoints_2d = th.as_tensor(keypoints_2d_clamp) * th.as_tensor([w, h, 1.0])
-        num_vertices = keypoints_2d.shape[-2]
-        keypoints_2d = keypoints_2d.reshape(-1,num_vertices,3)
-        
+        keypoints_2d_clamp = th.as_tensor(keypoints_2d_clamp) * th.as_tensor([w, h, 1.0])
+        keypoints_2d_clamp = keypoints_2d_clamp.reshape(-1,num_vertices,3)
+
         orientation = th.as_tensor(orientation)
         orientation = orientation.reshape(-1,3,3)
         quaternions = matrix_to_quaternion(orientation)
@@ -121,40 +127,48 @@ class CropObject(object):
         translation = th.as_tensor(translation)
         translation = translation.reshape(-1,3)
 
-        point_min = th.min(keypoints_2d, dim=1).values
-        point_max = th.max(keypoints_2d, dim=1).values
+        point_min = th.min(keypoints_2d_clamp, dim=1).values
+        point_max = th.max(keypoints_2d_clamp, dim=1).values
         
-        crop_img = th.empty(num_object, 3, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
+        vis_img = th.tensor([])
+        vis_crop_img = th.tensor([])
+        vis_point_2d = th.tensor([])
+        vis_trans = th.tensor([])
+        vis_orient = th.tensor([])
+        vis_scale = th.tensor([])
+        
         for obj in range(num_object):
-            # FIXME(Jiyion): Why is there a case where all keypoints are negative?
-            crop_w = int(point_max[obj][0]) - int(point_min[obj][0])
-            crop_h = int(point_max[obj][1]) - int(point_min[obj][1])
-            if crop_w <= 0 or crop_h <= 0:
-                print(keypoints_2d[obj])
-                print(keypoints_2d_uv)
-                print(num_object)
-                with open('/tmp/wtf.pkl', 'wb') as fp:
-                    dbg = inputs[Schema.IMAGE].cpu().numpy()
-                    pickle.dump(dbg, fp)
+            # NOTE(Jiyion): If visiblity is false, cropping that object is impossible
+            if not visibility[obj]:
                 continue
-            
-            crop_tmp = image[:, int(point_min[obj][1]):int(point_max[obj][1]), int(point_min[obj][0]):int(point_max[obj][0])]
-            try:
-                crop_tmp = resize(crop_tmp, size=self.opts.crop_img_size)
-            except RuntimeError:
-                print(point_min[obj][1], point_max[obj][1], point_min[obj][0], point_max[obj][0])
-                print(keypoints_2d_uv)
-                print(keypoints_2d_clamp)
-                print(keypoints_2d)
-            crop_img[obj] = crop_tmp
 
+            crop_tmp = image[:, int(point_min[obj][1]):int(point_max[obj][1]), int(point_min[obj][0]):int(point_max[obj][0])]
+            crop_tmp = resize(crop_tmp, size=self.opts.crop_img_size)
+
+            vis_img = th.cat((vis_img, image))
+            vis_crop_img = th.cat((vis_crop_img, crop_tmp))
+            vis_point_2d = th.cat((vis_point_2d, keypoints_2d[obj]))
+            vis_trans = th.cat((vis_trans, translation[obj]))
+            vis_orient = th.cat((vis_orient, quaternions[obj]))
+            vis_scale = th.cat((vis_scale, scale[obj]))
+            
         # shallow copy
         outputs = inputs.copy()
-        outputs[Schema.CROPPED_IMAGE] = crop_img
-        outputs[Schema.TRANSLATION] = translation
-        outputs[Schema.SCALE] = scale
-        outputs[Schema.ORIENTATION] = quaternions
-        outputs[Schema.VISIBILITY] = th.as_tensor(inputs[Schema.VISIBILITY]).reshape(-1,1)
-        # print([(k, v.shape) if isinstance(v, th.Tensor) else (k,v) for k,v in outputs.items()])
+        outputs[Schema.IMAGE] = vis_img.reshape(-1, c, w, h)
+        outputs[Schema.CROPPED_IMAGE] = vis_crop_img.reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
+        outputs[Schema.KEYPOINT_2D] = vis_point_2d.reshape(-1, 9, 3)
+        outputs[Schema.TRANSLATION] = vis_trans.reshape(-1, 3)
+        outputs[Schema.ORIENTATION] = vis_orient.reshape(-1, 4)
+        outputs[Schema.SCALE] = vis_scale.reshape(-1, 3)
+
+        print(inputs[Schema.INSTANCE_NUM])
+        print(inputs[Schema.VISIBILITY])
+        print(outputs[Schema.IMAGE].shape)
+        print(outputs[Schema.CROPPED_IMAGE].shape)
+        print(outputs[Schema.KEYPOINT_2D].shape)
+        print(outputs[Schema.TRANSLATION].shape)
+        print(outputs[Schema.ORIENTATION].shape)
+        print(outputs[Schema.SCALE].shape)
 
         return outputs
+

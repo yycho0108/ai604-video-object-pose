@@ -27,6 +27,7 @@ class Schema(Enum):
     KEYPOINT_HEATMAP = "keypoint_heatmap"
     KEYPOINT_NUM = "point_num"
     CROPPED_IMAGE = "crop_img"
+    VISIBILITY = "object/visibility"
 
 
 @encode.register(Schema)
