@@ -77,7 +77,8 @@ class InstancePadding:
             Schema.CLASS,
             # Schema.KEYPOINT_MAP,
             # Schema.DISPLACEMENT_MAP,
-            Schema.KEYPOINT_NUM  # I guess this is needed too...
+            Schema.KEYPOINT_NUM,  # I guess this is needed too...
+            Schema.VISIBILITY
         )
 
     def __init__(self, opts: Settings):

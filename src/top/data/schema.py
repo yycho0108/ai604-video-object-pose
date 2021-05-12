@@ -25,6 +25,7 @@ class Schema(Enum):
     HEATMAP_LOGITS = "object/heatmap_logits"
     DISPLACEMENT_MAP = "displacement_map"
     KEYPOINT_NUM = "point_num"
+    VISIBILITY = "visibility"
 
 
 @encode.register(Schema)

@@ -50,6 +50,7 @@ def decode(example, feature_names: List[str] = []):
     translation = example['object/translation'].reshape(num_instances, 3)
     orientation = example['object/orientation'].reshape(num_instances, 9)
     scale = example['object/scale'].reshape(num_instances, 3)
+    visibility = example['object/visibility'].reshape(num_instances, 1)
 
     out = {
         Schema.IMAGE: image,
@@ -60,6 +61,7 @@ def decode(example, feature_names: List[str] = []):
         Schema.SCALE: scale,
         Schema.PROJECTION: example['camera/projection'],
         Schema.KEYPOINT_NUM: num_keypoints,
+        Schema.VISIBILITY: visibility,
     }
 
     out.update({k: example[k] for k in feature_names})
@@ -100,6 +102,7 @@ class ObjectronDetection(th.utils.data.IterableDataset):
             'object/translation',
             'object/orientation',
             'object/scale',
+            'object/visibility',
             'point_3d',
             'point_2d',
             'point_num',

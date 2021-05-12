@@ -153,5 +153,7 @@ class CropObject(object):
         outputs[Schema.TRANSLATION] = _translation
         outputs[Schema.SCALE] = _scale
         outputs[Schema.ORIENTATION] = quaternions
+        outputs[Schema.VISIBILITY] = th.as_tensor(inputs[Schema.VISIBILITY]).reshape(-1,1)
+        # print([(k, v.shape) if isinstance(v, th.Tensor) else (k,v) for k,v in outputs.items()])
 
         return outputs
