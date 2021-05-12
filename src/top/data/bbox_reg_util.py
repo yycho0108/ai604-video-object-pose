@@ -14,10 +14,13 @@ from simple_parsing import Serializable
 
 import torch as th
 import torch.nn.functional as F
+from torchvision.transforms.functional import resize
 from pytorch3d.transforms import matrix_to_quaternion
 
 from top.data.schema import Schema
 from top.run.box_generator import Box
+
+import pickle
 
 """
 Enables writing json with numpy arrays to file
@@ -118,10 +121,10 @@ class CropObject(object):
         point_min = th.min(keypoints_2d, dim=1).values
         point_max = th.max(keypoints_2d, dim=1).values
         
-        crop_img = th.empty(num_object, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
+        crop_img = th.empty(num_object, 3, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
         for obj in range(num_object):
             crop_tmp = image[:, int(point_min[obj][1]):int(point_max[obj][1]), int(point_min[obj][0]):int(point_max[obj][0])]
-            crop_tmp = F.interpolate(crop_tmp, size=self.opts.crop_img_size[0])
+            crop_tmp = resize(crop_tmp, size=self.opts.crop_img_size)
             crop_img[obj] = crop_tmp
 
         # shallow copy
@@ -134,5 +137,3 @@ class CropObject(object):
         # print([(k, v.shape) if isinstance(v, th.Tensor) else (k,v) for k,v in outputs.items()])
 
         return outputs
-
-# FIXME(Jiyong): split class -> crop / resize(built-in) / collate_fn

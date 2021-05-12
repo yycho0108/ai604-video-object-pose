@@ -9,7 +9,7 @@ Reference:
 
 from dataclasses import dataclass, replace
 from simple_parsing import Serializable
-from typing import Dict, Any
+from typing import Tuple, Dict, Any
 from tqdm.auto import tqdm
 
 import torch as th
@@ -45,12 +45,12 @@ class AppSettings(Serializable):
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
     train: Trainer.Settings = Trainer.Settings(train_steps=1)
     # FIXME(Jiyong): need to test padding for batch
-    batch_size: int = 1
+    batch_size: int = 2
     alpha: float = 0.5
     device: str = 'cpu'
     log_period: int = 32
-    save_period:int = 100
-    eval_period:int = 100
+    save_period: int = 100
+    eval_period: int = 100
 
 
 class TrainLogger:
@@ -109,8 +109,7 @@ def main():
     optimizer = th.optim.Adam(model.parameters(), lr=1e-3)
     writer = SummaryWriter(path.log)
 
-    transform = Compose([CropObject(CropObject.Settings()),
-                         InstancePadding(opts.padding)])
+    transform = Compose([CropObject(CropObject.Settings()),])
     train_loader, test_loader = get_loaders(opts.dataset,
                                             device=th.device('cpu'),
                                             batch_size=opts.batch_size,
@@ -181,9 +180,14 @@ def main():
 
     def _loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
+        # TODO(Jiyong): chage to collate_fn
         image = data[Schema.CROPPED_IMAGE].to(device)
+        _, _, c, h, w = image.shape
+        image = image.view(-1, c, h, w)
         truth_orient = data[Schema.ORIENTATION].to(device)
+        truth_orient = truth_orient.view(-1,4)
         truth_dim = data[Schema.SCALE].to(device)
+        truth_dim = truth_dim.view(-1,3)
 
         dim, quat = model(image)
 
