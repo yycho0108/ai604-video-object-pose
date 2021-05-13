@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 #PYTHON_ARGCOMPLETE_OK
 
-import pkg_resources
 
+import logging
 import itertools
 from dataclasses import dataclass
 from simple_parsing import Serializable
@@ -26,7 +26,7 @@ try:
         AlphaCompositor,
     )
 except ImportError:
-    print('welp')
+    logging.warn('pytorch3d import has failed, colored cube dataset will be disabled.')
 from top.run.torch_util import resolve_device
 from top.run.app_util import update_settings
 from top.data.schema import Schema

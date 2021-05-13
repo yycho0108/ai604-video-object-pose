@@ -127,10 +127,9 @@ class CropObject(object):
         translation = th.as_tensor(translation)
         translation = translation.reshape(-1,3)
 
-        point_min = th.min(keypoints_2d_clamp, dim=1).values
-        point_max = th.max(keypoints_2d_clamp, dim=1).values
+        keypoint_2d_min = th.min(keypoints_2d_clamp, dim=1).values
+        keypoint_2d_max = th.max(keypoints_2d_clamp, dim=1).values
         
-        vis_img = th.tensor([])
         vis_crop_img = th.tensor([])
         vis_point_2d = th.tensor([])
         vis_trans = th.tensor([])
@@ -142,7 +141,8 @@ class CropObject(object):
             if not visibility[obj]:
                 continue
 
-            crop_tmp = image[:, int(point_min[obj][1]):int(point_max[obj][1]), int(point_min[obj][0]):int(point_max[obj][0])]
+            # TODO(Jiyong): using torchvision.transfroms.functional.resized_crop
+            crop_tmp = image[:, int(keypoint_2d_min[obj][1]):int(keypoint_2d_max[obj][1]), int(keypoint_2d_min[obj][0]):int(keypoint_2d_max[obj][0])]
             crop_tmp = resize(crop_tmp, size=self.opts.crop_img_size)
 
             vis_img = th.cat((vis_img, image))
@@ -154,21 +154,12 @@ class CropObject(object):
             
         # shallow copy
         outputs = inputs.copy()
-        outputs[Schema.IMAGE] = vis_img.reshape(-1, c, w, h)
         outputs[Schema.CROPPED_IMAGE] = vis_crop_img.reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
-        outputs[Schema.KEYPOINT_2D] = vis_point_2d.reshape(-1, 9, 3)
+        outputs[Schema.KEYPOINT_2D] = vis_point_2d.reshape(-1, num_vertices, 3)
         outputs[Schema.TRANSLATION] = vis_trans.reshape(-1, 3)
+        # TODO(Jiyong): make Schema.QUATERNION
         outputs[Schema.ORIENTATION] = vis_orient.reshape(-1, 4)
         outputs[Schema.SCALE] = vis_scale.reshape(-1, 3)
-
-        print(inputs[Schema.INSTANCE_NUM])
-        print(inputs[Schema.VISIBILITY])
-        print(outputs[Schema.IMAGE].shape)
-        print(outputs[Schema.CROPPED_IMAGE].shape)
-        print(outputs[Schema.KEYPOINT_2D].shape)
-        print(outputs[Schema.TRANSLATION].shape)
-        print(outputs[Schema.ORIENTATION].shape)
-        print(outputs[Schema.SCALE].shape)
 
         return outputs
 

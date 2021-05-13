@@ -157,6 +157,7 @@ def main():
     # TODO(ycho): Consider folding this callback inside Trainer()
     # and adding {test_loader, eval_fn} args to Trainer instead.
     def _eval_fn(model, data):
+        # TODO(Jiyong): hardcode for cropped image size
         crop_img = data[Schema.CROPPED_IMAGE].view(-1, 3, 224, 224)
         return model(crop_img.to(device))
     evaluator = Evaluator(
@@ -199,16 +200,9 @@ def main():
         # loss = opts.alpha * scale_loss + orient_loss
         
         dim, quat = model(image)
-        print('...')
-        print(image.max())
-        print(truth_dim.max())
-        print(truth_orient.max())
-        print(dim.max())
-        print(quat.max())
+
         scale_loss = scale_loss_func(dim, truth_dim)
-        print(scale_loss)
         orient_loss = orientation_loss_func(quat, truth_orient)
-        print(orient_loss)
         loss = opts.alpha * scale_loss + orient_loss
 
         return loss
