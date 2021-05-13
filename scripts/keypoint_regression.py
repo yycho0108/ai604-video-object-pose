@@ -25,7 +25,7 @@ from top.data.transforms import (
     DenseMapsMobilePose,
     Normalize,
     InstancePadding,
-    DrawDisplacementMap
+    DrawKeypointMap
 )
 from top.data.schema import Schema
 from top.data.load import (DatasetSettings, get_loaders)
@@ -75,10 +75,12 @@ class TrainLogger:
         self.period = period
         self._subscribe()
 
-        self.draw_dmap = DrawDisplacementMap(DrawDisplacementMap.Settings())
+        self.draw_kpt_map = DrawKeypointMap(
+            DrawKeypointMap.Settings(
+                as_displacement=False))
 
     def _on_loss(self, loss):
-        """ log training loss. """
+        """log training loss."""
         loss = loss.detach().cpu()
 
         # Update tensorboard ...
@@ -90,19 +92,19 @@ class TrainLogger:
         self.tqdm.update()
 
     def _on_train_out(self, inputs, outputs):
-        """ log training outputs. """
+        """log training outputs."""
 
         # Fetch inputs ...
         with th.no_grad():
-            input_image = (inputs[Schema.IMAGE].detach())
-            out_heatmap = (th.sigmoid(outputs[Schema.HEATMAP_LOGITS]).detach())
+            input_image = inputs[Schema.IMAGE].detach()
+            out_heatmap = outputs[Schema.HEATMAP].detach()
             target_heatmap = inputs[Schema.HEATMAP].detach()
             # NOTE(ycho): Only show for first image
             # feels a bit wasteful? consider better alternatives...
-            out_dispmap = self.draw_dmap(
-                outputs[Schema.DISPLACEMENT_MAP][0]).detach()
-            target_dispmap = self.draw_dmap(
-                inputs[Schema.DISPLACEMENT_MAP][0]).detach()
+            out_kpt_map = self.draw_kpt_map(
+                outputs[Schema.KEYPOINT_HEATMAP][0]).detach()
+            target_kpt_map = self.draw_kpt_map(
+                inputs[Schema.KEYPOINT_HEATMAP][0]).detach()
 
         # TODO(ycho): denormalize input image.
         image = th.clip(0.5 + (input_image[0] * 0.25), 0.0, 1.0)
@@ -110,21 +112,23 @@ class TrainLogger:
             'train_images',
             image.cpu(),
             global_step=self.step)
-        self.writer.add_images('out_heatmap',
-                               out_heatmap[0, :, None].cpu(),
-                               global_step=self.step)
-        self.writer.add_images('target_heatmap',
-                               target_heatmap[0, :, None].cpu(),
-                               global_step=self.step)
-        self.writer.add_images('out_dispmap',
-                               out_dispmap.cpu(),
-                               global_step=self.step)
-        self.writer.add_images('target_dispmap',
-                               target_dispmap.cpu(),
-                               global_step=self.step)
+
+        for i_cls in range(out_heatmap.shape[1]):
+            self.writer.add_image(F'out_heatmap/{i_cls}',
+                                  out_heatmap[0, i_cls, None].cpu(),
+                                  global_step=self.step)
+            self.writer.add_image(F'target_heatmap/{i_cls}',
+                                  target_heatmap[0, i_cls, None].cpu(),
+                                  global_step=self.step)
+        self.writer.add_image('out_kpt_map',
+                              out_kpt_map.cpu(),
+                              global_step=self.step)
+        self.writer.add_image('target_kpt_map',
+                              target_kpt_map.cpu(),
+                              global_step=self.step)
 
     def _on_step(self, step):
-        """ save current step """
+        """save current step."""
         self.step = step
 
     def _subscribe(self):
@@ -140,10 +144,8 @@ class TrainLogger:
 
 
 class ModelAsTuple(th.nn.Module):
-    """
-    Workaround to avoid tracing bugs in add_graph from
-    rejecting outputs of form Dict[Schema,Any].
-    """
+    """Workaround to avoid tracing bugs in add_graph from rejecting outputs of
+    form Dict[Schema,Any]."""
 
     def __init__(self, model: th.nn.Module):
         super().__init__()
@@ -161,18 +163,19 @@ def main():
 
     device = resolve_device(opts.device)
     model = KeypointNetwork2D(opts.model).to(device)
+    # FIXME(ycho): Hardcoded lr == 1e-3
     optimizer = th.optim.Adam(model.parameters(), lr=1e-3)
     writer = th.utils.tensorboard.SummaryWriter(path.log)
 
     # NOTE(ycho): Forcing data loading on the CPU.
     # TODO(ycho): Consider scripted compositions?
     transform = Compose([
-        DenseMapsMobilePose(opts.maps, th.device('cpu:0')),
+        DenseMapsMobilePose(opts.maps, th.device(device)),
         Normalize(Normalize.Settings()),
         InstancePadding(opts.padding)
     ])
     train_loader, test_loader = get_loaders(opts.dataset,
-                                            device=th.device('cpu:0'),
+                                            device=th.device(device),
                                             batch_size=opts.batch_size,
                                             transform=transform)
 
@@ -253,8 +256,10 @@ def main():
 
     # TODO(ycho): weight the losses with some constant ??
     losses = {
-        Schema.DISPLACEMENT_MAP: KeypointDisplacementLoss(),
-        Schema.HEATMAP: ObjectHeatmapLoss()
+        Schema.HEATMAP: ObjectHeatmapLoss(key=Schema.HEATMAP),
+        # Schema.DISPLACEMENT_MAP: KeypointDisplacementLoss(),
+        Schema.KEYPOINT_HEATMAP: ObjectHeatmapLoss(
+            key=Schema.KEYPOINT_HEATMAP)
     }
 
     def _loss_fn(model: th.nn.Module, data):
@@ -268,9 +273,9 @@ def main():
         hub.publish(Topic.TRAIN_OUT,
                     inputs=data,
                     outputs=outputs)
-        displacement_loss = losses[Schema.DISPLACEMENT_MAP](outputs, data)
+        kpt_heatmap_loss = losses[Schema.KEYPOINT_HEATMAP](outputs, data)
         heatmap_loss = losses[Schema.HEATMAP](outputs, data)
-        return (displacement_loss + heatmap_loss)
+        return (kpt_heatmap_loss + heatmap_loss)
 
     ## Trainer
     trainer = Trainer(

@@ -87,8 +87,7 @@ class ObjectronDetection(th.utils.data.IterableDataset):
             'cup',
             'laptop',
             'shoe')
-        train: bool = True
-        shuffle: bool = True
+        shuffle_shards: bool = True
         # NOTE(ycho): Refer to objectron/schema/features.py
         context: Tuple[str, ...] = ('count', 'sequence_id')
         # NOTE(ycho): Refer to objectron/schema/features.py
@@ -111,8 +110,9 @@ class ObjectronDetection(th.utils.data.IterableDataset):
         )
         cache_dir = '~/.cache/ai604/'
 
-    def __init__(self, opts: Settings, transform=None):
+    def __init__(self, opts: Settings, train: bool = True, transform=None):
         self.opts = opts
+        self.train = train
         self.shards = self._get_shards()
         self.xfm = transform
 
@@ -131,7 +131,7 @@ class ObjectronDetection(th.utils.data.IterableDataset):
 
     def _get_shards(self):
         """ return list of shards, potentially memoized for efficiency """
-        prefix = 'train' if self.opts.train else 'test'
+        prefix = 'train' if self.train else 'test'
         # FIXME(ycho): hardcoded {prefix}-det-shards
         shards_cache = F'{self.opts.cache_dir}/{prefix}-det-shards.pkl'
 
@@ -145,12 +145,12 @@ class ObjectronDetection(th.utils.data.IterableDataset):
             with open(str(shards_path), 'rb') as f:
                 shards = pickle.load(f)
 
-        if self.opts.shuffle:
+        if self.opts.shuffle_shards:
             np.random.shuffle(shards)
         return shards
 
     def _glob(self) -> List[str]:
-        train_type = 'train' if self.opts.train else 'test'
+        train_type = 'train' if self.train else 'test'
         shards = []
 
         # Aggregate class shards

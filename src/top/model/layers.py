@@ -13,10 +13,10 @@ from kornia.geometry.subpix.dsnt import (
 
 
 class ConvUpsample(nn.Module):
-    """
-    2x Upsampling block via transposed convolution.
-    Partly adopted from :
-    "https://github.com/xingyizhou/CenterNet/blob/master/src/lib/models/networks/msra_resnet.py"
+    """2x Upsampling block via transposed convolution.
+
+    Partly adopted from : "https://github.com/xingyizhou/CenterNet/blob/
+    master/src/lib/models/networks/msra_resnet.py"
     """
 
     @dataclass
@@ -43,9 +43,8 @@ class ConvUpsample(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    """
-    NOTE(ycho): Not sure what to actually do, so it's just a placeholder for now.
-    """
+    """NOTE(ycho): Not sure what to actually do, so it's just a placeholder for
+    now."""
 
     def __init__(self, c_in: int, c_out: int):
         super().__init__()
@@ -98,6 +97,13 @@ class DisplacementLayer2D(nn.Module):
 
 
 class HeatmapLayer2D(nn.Module):
+    """Layer for computing dense heatmaps.
+
+    Output heatmaps have the same spatial dimension as the input.
+    NOTE(ycho): Beware that this class produces logits on which further
+    mapping such as the activation through the sigmoid function has to
+    be applied to convert to a quantity interpretable as probability.
+    """
 
     @dataclass
     class Settings(Serializable):
@@ -131,35 +137,52 @@ class HeatmapLayer2D(nn.Module):
 
 
 class KeypointLayer2D(nn.Module):
-    """
-    Placeholder for classification-style keypoint prediction in 2D.
-    Relatively straightforward implementation: infers dense per-pixel keypoint.
-    Probably works-ish, but should be replaced with a more principled alternative.
+    """CenterNet-style keypoint prediction in 2D.
 
-    TODO(ycho): Consider representing keypoint output as {cls, offset}.
+    We treat keypoint locations as offsets from the center such that
+    the keypoint offsets are predicted in a "multi-head" fashion from the center.
+    See Section 4.2 from [1].
+
+    [1] Zhou, Xingyi et al. “Objects as Points.” ArXiv abs/1904.07850 (2019): n. pag.
     """
 
     @dataclass
     class Settings(Serializable):
         kernel_size: int = 3
-        num_keypoints: int = (8 + 1 + 1)
+        num_keypoints: int = 9
+        heatmap: HeatmapLayer2D.Settings = HeatmapLayer2D.Settings()
 
     def __init__(self, opts: Settings, c_in: int):
         super().__init__()
         self.opts = opts
-        self.conv_kpt_cls = nn.Conv2d(
-            c_in, opts.num_keypoints, opts.kernel_size,
-            padding=opts.kernel_size // 2)
 
-    def forward(self, inputs):
-        x = inputs
-        c_logit = self.conv_kpt_cls(x)
-        return (c_logit)
+        # TODO(ycho): Fancier kpt
+        self.offset = nn.Conv2d(c_in,
+                                opts.num_keypoints * 2,
+                                opts.kernel_size,
+                                padding=opts.kernel_size // 2
+                                )
+
+        self.heatmap = HeatmapLayer2D(
+            opts.heatmap, c_in=c_in)
+
+    def forward(self, inputs: th.Tensor):
+        """
+
+        input: th.Tensor feature map.
+
+        Returns:
+            offset  : [N,Kx2,H,W] Dense keypoint offsets from center
+            heatmap : [N,K,H,W] Additional keypoint heatmaps for refinement.
+        """
+        offset = self.offset(inputs)
+        heatmap = self.heatmap(inputs)
+        return (offset, heatmap)
 
 
 class KeypointLayer3D(nn.Module):
-    """
-    CenterNet-style 3D keypoint regressor.
+    """CenterNet-style 3D keypoint regressor.
+
     TODO(ycho): Finish implementation.
     """
 
@@ -176,8 +199,7 @@ class KeypointLayer3D(nn.Module):
 
 
 class DsntLayer2D(nn.Module):
-    """
-    Dense Heatmap -> sparse keypoint locations.
+    """Dense Heatmap -> sparse keypoint locations.
 
     @see kornia.geometry.subpix.dsnt.spatial_expectation2d
     """
@@ -192,7 +214,7 @@ class DsntLayer2D(nn.Module):
         super().__init__()
 
     def forward(self, inputs: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
-        """ NCHW -> NC2 """
+        """NCHW -> NC2."""
         # Convert logits to probabilities.
         # TODO(ycho): Consider if this is preferable to elementwise sigmoid.
         prob = spatial_softmax2d(inputs, temperature=self.temperature)

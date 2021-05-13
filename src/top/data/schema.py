@@ -7,8 +7,8 @@ from simple_parsing.helpers.serialization import encode, register_decoding_fn
 
 
 class Schema(Enum):
-    """
-    Set of fixed constants to refer to contents from our dataset interfaces.
+    """Set of fixed constants to refer to contents from our dataset interfaces.
+
     NOTE(ycho): Generally intended to follow the Objectron schema.
     """
     IMAGE = "image"
@@ -24,18 +24,20 @@ class Schema(Enum):
     HEATMAP = "object/heatmap"
     HEATMAP_LOGITS = "object/heatmap_logits"
     DISPLACEMENT_MAP = "displacement_map"
+    KEYPOINT_HEATMAP = "keypoint_heatmap"
     KEYPOINT_NUM = "point_num"
     VISIBILITY = "visibility"
+    KEYPOINT_OFFSET = "keypoint_offset"
 
 
 @encode.register(Schema)
 def encode_schema(obj: Schema) -> str:
-    """Encode the enum with the underlying `str` representation. """
+    """Encode the enum with the underlying `str` representation."""
     return str(obj.value)
 
 
 def decode_schema(obj: str) -> Schema:
-    """ Decode str into Schema enum """
+    """Decode str into Schema enum."""
     return Schema(obj)
 
 
