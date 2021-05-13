@@ -130,6 +130,7 @@ class CropObject(object):
         keypoint_2d_min = th.min(keypoints_2d_clamp, dim=1).values
         keypoint_2d_max = th.max(keypoints_2d_clamp, dim=1).values
         
+        # TODO(Jiyong): change tensor to list -> append -> change dtype
         vis_crop_img = th.tensor([])
         vis_point_2d = th.tensor([])
         vis_trans = th.tensor([])
