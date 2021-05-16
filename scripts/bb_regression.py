@@ -30,7 +30,7 @@ from top.run.torch_util import resolve_device
 
 from top.model.bbox_3d import BoundingBoxRegressionModel
 
-from top.data.load import (DatasetSettings, get_loaders)
+from top.data.load import (DatasetSettings, collate_cropped_img, get_loaders)
 from top.data.schema import Schema
 from top.data.bbox_reg_util import CropObject
 
@@ -43,7 +43,7 @@ class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
-    train: Trainer.Settings = Trainer.Settings(train_steps=100)
+    train: Trainer.Settings = Trainer.Settings(train_steps=1)
     # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 8
     alpha: float = 0.5
@@ -110,12 +110,12 @@ def main():
     writer = SummaryWriter(path.log)
 
     transform = Compose([CropObject(CropObject.Settings()),
-                         Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,))),
-                         InstancePadding(opts.padding)])
+                         Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,)))])
     train_loader, test_loader = get_loaders(opts.dataset,
                                             device=th.device('cpu'),
                                             batch_size=opts.batch_size,
-                                            transform=transform)
+                                            transform=transform,
+                                            collate_fn = collate_cropped_img)
 
     # NOTE(ycho): Synchronous event hub.
     hub = Hub()
@@ -184,25 +184,18 @@ def main():
 
     def _loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
-        # TODO(Jiyong): chage to collate_fn
         image = data[Schema.CROPPED_IMAGE].to(device)
-        # image = image * (1.0/255.0) - 0.5
-        _, _, c, h, w = image.shape
+        c, h, w = image.shape[-3:]
         image = image.view(-1, c, h, w)
-        truth_orient = data[Schema.ORIENTATION].to(device)
-        truth_orient = truth_orient.view(-1,4)
+        truth_quat = data[Schema.QUATERNION].to(device)
+        truth_quat = truth_quat.view(-1,4)
         truth_dim = data[Schema.SCALE].to(device)
         truth_dim = truth_dim.view(-1,3)
 
-        # dim, quat = model(image)
-        # scale_loss = scale_loss_func(dim, truth_dim)
-        # orient_loss = orientation_loss_func(quat, truth_orient)
-        # loss = opts.alpha * scale_loss + orient_loss
-        
         dim, quat = model(image)
 
         scale_loss = scale_loss_func(dim, truth_dim)
-        orient_loss = orientation_loss_func(quat, truth_orient)
+        orient_loss = orientation_loss_func(quat, truth_quat)
         loss = opts.alpha * scale_loss + orient_loss
 
         return loss

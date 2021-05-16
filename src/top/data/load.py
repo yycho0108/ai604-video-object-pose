@@ -6,11 +6,13 @@ from simple_parsing import Serializable
 # NOTE(ycho): Required for dealing with `enum` registration
 from simple_parsing.helpers.serialization import encode, register_decoding_fn
 import torch as th
-from top.data.colored_cube_dataset import ColoredCubeDataset
 
+from top.data.colored_cube_dataset import ColoredCubeDataset
 from top.data.objectron_sequence import ObjectronSequence
 from top.data.objectron_detection import ObjectronDetection
 from top.data.cached_dataset import CachedDataset
+
+from collections import defaultdict
 
 
 # TODO(ycho): add objectron sequence as an option.
@@ -66,7 +68,7 @@ def get_dataset(opts: DatasetSettings, train: bool,
 
 
 def get_loaders(opts: DatasetSettings, device: th.device,
-                batch_size: int, transform=None):
+                batch_size: int, transform=None, collate_fn=None):
     """ Fetch pair of (train,test) loaders for MNIST data """
 
     if opts.use_cached_dataset:
@@ -88,12 +90,27 @@ def get_loaders(opts: DatasetSettings, device: th.device,
         train_dataset,
         batch_size=batch_size,
         shuffle=opts.shuffle,
-        num_workers=opts.num_workers)
+        num_workers=opts.num_workers,
+        collate_fn=collate_fn)
 
     test_loader = th.utils.data.DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=opts.shuffle,
-        num_workers=opts.num_workers)
+        num_workers=opts.num_workers,
+        collate_fn=collate_fn)
 
     return (train_loader, test_loader)
+
+
+def collate_cropped_img(data):
+    out = defaultdict(list)
+    for d in data:
+        [out[k].append(v) for k,v in d.items()]
+    
+    for k in out:
+        v = out[k]
+        if len(v)>0 and isinstance(v[0], th.Tensor):
+            out[k] = th.cat(v, dim=0)
+    
+    return out

@@ -28,6 +28,7 @@ class Schema(Enum):
     KEYPOINT_NUM = "point_num"
     CROPPED_IMAGE = "crop_img"
     VISIBILITY = "object/visibility"
+    QUATERNION = "quaternion"
 
 
 @encode.register(Schema)

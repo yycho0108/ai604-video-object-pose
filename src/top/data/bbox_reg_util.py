@@ -15,18 +15,18 @@ from simple_parsing import Serializable
 
 import torch as th
 import torch.nn.functional as F
-from torchvision.transforms.functional import resize
+from torchvision.transforms.functional import resized_crop
 from pytorch3d.transforms import matrix_to_quaternion
 
 from top.data.schema import Schema
 from top.run.box_generator import Box
 
-import pickle
 
-"""
-Enables writing json with numpy arrays to file
-"""
+
 class NumpyEncoder(json.JSONEncoder):
+    """
+    Enables writing json with numpy arrays to file
+    """
     def default(self, obj):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
@@ -94,7 +94,6 @@ class CropObject(object):
     def __init__(self, opts: Settings):
         self.opts = opts
 
-    # FIXME(Jiyon): make batch with cropped image, np,scipy -> th
     def __call__(self, inputs: dict):
         # Parse inputs
         image = inputs[Schema.IMAGE]
@@ -130,37 +129,36 @@ class CropObject(object):
         keypoint_2d_min = th.min(keypoints_2d_clamp, dim=1).values
         keypoint_2d_max = th.max(keypoints_2d_clamp, dim=1).values
         
-        # TODO(Jiyong): change tensor to list -> append -> change dtype
-        vis_crop_img = th.tensor([])
-        vis_point_2d = th.tensor([])
-        vis_trans = th.tensor([])
-        vis_orient = th.tensor([])
-        vis_scale = th.tensor([])
+        visible_crop_img = []
+        visible_point_2d = []
+        visible_trans = []
+        visible_quat = []
+        visible_scale = []
         
         for obj in range(num_object):
             # NOTE(Jiyion): If visiblity is false, cropping that object is impossible
             if not visibility[obj]:
                 continue
 
-            # TODO(Jiyong): using torchvision.transfroms.functional.resized_crop
-            crop_tmp = image[:, int(keypoint_2d_min[obj][1]):int(keypoint_2d_max[obj][1]), int(keypoint_2d_min[obj][0]):int(keypoint_2d_max[obj][0])]
-            crop_tmp = resize(crop_tmp, size=self.opts.crop_img_size)
+            top = int(keypoint_2d_min[obj][1])
+            left = int(keypoint_2d_min[obj][0])
+            height = int(keypoint_2d_max[obj][1]) - int(keypoint_2d_min[obj][1])
+            width = int(keypoint_2d_max[obj][0]) - int(keypoint_2d_min[obj][0])
+            crop_tmp = resized_crop(image, top, left, height, width, size=self.opts.crop_img_size)
 
-            vis_img = th.cat((vis_img, image))
-            vis_crop_img = th.cat((vis_crop_img, crop_tmp))
-            vis_point_2d = th.cat((vis_point_2d, keypoints_2d[obj]))
-            vis_trans = th.cat((vis_trans, translation[obj]))
-            vis_orient = th.cat((vis_orient, quaternions[obj]))
-            vis_scale = th.cat((vis_scale, scale[obj]))
+            visible_crop_img.append(crop_tmp)
+            visible_point_2d.append(keypoints_2d[obj])
+            visible_trans.append(translation[obj])
+            visible_quat.append(quaternions[obj])
+            visible_scale.append(scale[obj])
             
         # shallow copy
         outputs = inputs.copy()
-        outputs[Schema.CROPPED_IMAGE] = vis_crop_img.reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
-        outputs[Schema.KEYPOINT_2D] = vis_point_2d.reshape(-1, num_vertices, 3)
-        outputs[Schema.TRANSLATION] = vis_trans.reshape(-1, 3)
-        # TODO(Jiyong): make Schema.QUATERNION
-        outputs[Schema.ORIENTATION] = vis_orient.reshape(-1, 4)
-        outputs[Schema.SCALE] = vis_scale.reshape(-1, 3)
+        outputs[Schema.CROPPED_IMAGE] = th.stack(visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
+        outputs[Schema.KEYPOINT_2D] = th.stack(visible_point_2d).reshape(-1, num_vertices, 3)
+        outputs[Schema.TRANSLATION] = th.stack(visible_trans).reshape(-1, 3)
+        outputs[Schema.QUATERNION] = th.stack(visible_quat).reshape(-1, 4)
+        outputs[Schema.SCALE] = th.stack(visible_scale).reshape(-1, 3)
 
         return outputs
 
