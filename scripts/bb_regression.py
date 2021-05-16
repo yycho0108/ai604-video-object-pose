@@ -43,7 +43,7 @@ class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-kpt')
-    train: Trainer.Settings = Trainer.Settings(train_steps=1)
+    train: Trainer.Settings = Trainer.Settings(train_steps=1000)
     # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 8
     alpha: float = 0.5
