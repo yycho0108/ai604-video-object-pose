@@ -61,7 +61,7 @@ def decode(example, feature_names: List[str] = []):
         Schema.SCALE: scale,
         Schema.PROJECTION: example['camera/projection'],
         Schema.KEYPOINT_NUM: num_keypoints,
-        Schema.VISIBILITY: visibility,
+        Schema.VISIBILITY: visibility
     }
 
     out.update({k: example[k] for k in feature_names})
@@ -107,6 +107,7 @@ class ObjectronDetection(th.utils.data.IterableDataset):
             'point_num',
             'camera/intrinsics',
             'camera/projection',
+            'object/visibility'
         )
         cache_dir = '~/.cache/ai604/'
 

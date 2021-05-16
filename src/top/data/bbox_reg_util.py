@@ -10,32 +10,36 @@ from typing import Tuple
 import numpy as np
 import os
 import json
-from simple_parsing.helpers.serialization.serializable import Serializable
+import copy
+from simple_parsing import Serializable
 
 import torch as th
-import cv2
-from scipy.spatial.transform import Rotation as R
+import torch.nn.functional as F
+from torchvision.transforms.functional import resized_crop
+from pytorch3d.transforms import matrix_to_quaternion
 
 from top.data.schema import Schema
 from top.run.box_generator import Box
 
-"""
-Enables writing json with numpy arrays to file
-"""
+
+
 class NumpyEncoder(json.JSONEncoder):
+    """
+    Enables writing json with numpy arrays to file
+    """
     def default(self, obj):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return json.JSONEncoder.default(self,obj)
 
 
-"""
-Class will hold the average dimension for a class, regressed value is the residual
-"""
 class ClassAverages:
+    """
+    Class will hold the average dimension for a class, regressed value is the residual
+    """
     def __init__(self, classes=[]):
         self.dimension_map = {}
-        self.filename = os.path.abspath(os.path.dirname(__file__)) + '/class_averages.txt'
+        self.filename = os.path.abspath(os.path.dirname(__file__)) + '/class_averages.json'
 
         if len(classes) == 0: # eval mode
             self.load_items_from_file()
@@ -77,7 +81,6 @@ class ClassAverages:
         return class_.lower() in self.dimension_map
 
 
-# FIXME(Jiyong): need to test
 class CropObject(object):
     """
     Crop object from image.
@@ -86,7 +89,7 @@ class CropObject(object):
 
     @dataclass
     class Settings(Serializable):
-        crop_img_size: Tuple[int, int, int] = (224, 224)
+        crop_img_size: Tuple[int, int] = (224, 224)
 
     def __init__(self, opts: Settings):
         self.opts = opts
@@ -94,66 +97,68 @@ class CropObject(object):
     def __call__(self, inputs: dict):
         # Parse inputs
         image = inputs[Schema.IMAGE]
-        class_index = inputs[Schema.CLASS]
         num_object = inputs[Schema.INSTANCE_NUM]
-        num_keypoints = inputs[Schema.KEYPOINT_NUM]
         translation = inputs[Schema.TRANSLATION]
         orientation = inputs[Schema.ORIENTATION]
         scale = inputs[Schema.SCALE]
+        visibility = inputs[Schema.VISIBILITY]
 
-        h, w = image.shape[-2:]
-        keypoints_2d = np.split(inputs[Schema.KEYPOINT_2D], np.array(np.cumsum(num_keypoints)))
-        keypoints_2d = [points.reshape(-1,3) for points in keypoints_2d]
-        keypoints_2d = [np.multiply(keypoint, np.array([w, h, 1.0], np.float32)).astype(int)
-                        for keypoint in keypoints_2d]
+        c, h, w = image.shape[:]
+        keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]
+
         
-        orientation = np.split(orientation, num_object)
-        orientation = [rotation.reshape(3,3) for rotation in orientation]
+        keypoints_2d = th.as_tensor(keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
+        num_vertices = keypoints_2d.shape[-2]
+        keypoints_2d = keypoints_2d.reshape(-1,num_vertices,3)
 
-        scale = np.split(scale, num_object)
-        scale = [scales.reshape(-1,3) for scales in scale]
+        # clamp for the case that keypoints is in out of image
+        keypoints_2d_clamp = th.clamp(th.as_tensor(keypoints_2d_uv), min=0, max=1)
+        keypoints_2d_clamp = th.as_tensor(keypoints_2d_clamp) * th.as_tensor([w, h, 1.0])
+        keypoints_2d_clamp = keypoints_2d_clamp.reshape(-1,num_vertices,3)
 
-        translation = np.split(translation, num_object)
-        translation = [translations.reshape(-1,3) for translations in translation]
+        orientation = th.as_tensor(orientation)
+        orientation = orientation.reshape(-1,3,3)
+        quaternions = matrix_to_quaternion(orientation)
 
-        crop_img = []
-        quaternions = []
-        _scale = []
-        _translation = []
-        for object_id in range(num_object):       
-            # NOTE(Jiyong): np.split() leaves an empty array at the end of the list.
-            if keypoints_2d[object_id].size == 0:
-                break
+        scale = th.as_tensor(scale)
+        scale = scale.reshape(-1,3)
 
-            x_min, y_min, _ = np.min(keypoints_2d[object_id], axis=0)
-            x_max, y_max, _ = np.max(keypoints_2d[object_id], axis=0)
+        translation = th.as_tensor(translation)
+        translation = translation.reshape(-1,3)
 
-            # NOTE(Jiyong): TypeError: Expected cv::UMat for argument 'src'
-            # -> cv2.Umat() is functionally equivalent to np.float32() & (H,W,C)
-            crop_tmp = np.float32(image[:, y_min:y_max, x_min:x_max])
-            crop_tmp = np.transpose(crop_tmp, (1,2,0))
-            try:
-                crop_tmp = cv2.resize(crop_tmp, dsize=self.opts.crop_img_size)
-            except Exception as e:
-                print(crop_tmp.shape)
-                raise
+        keypoint_2d_min = th.min(keypoints_2d_clamp, dim=1).values
+        keypoint_2d_max = th.max(keypoints_2d_clamp, dim=1).values
+        
+        visible_crop_img = []
+        visible_point_2d = []
+        visible_trans = []
+        visible_quat = []
+        visible_scale = []
+        
+        for obj in range(num_object):
+            # NOTE(Jiyion): If visiblity is false, cropping that object is impossible
+            if not visibility[obj]:
+                continue
 
-            crop_tmp = np.transpose(crop_tmp, (2,0,1))
-            crop_img.append(crop_tmp)
+            top = int(keypoint_2d_min[obj][1])
+            left = int(keypoint_2d_min[obj][0])
+            height = int(keypoint_2d_max[obj][1]) - int(keypoint_2d_min[obj][1])
+            width = int(keypoint_2d_max[obj][0]) - int(keypoint_2d_min[obj][0])
+            crop_tmp = resized_crop(image, top, left, height, width, size=self.opts.crop_img_size)
 
-            # For quaternions regression
-            r = R.from_matrix(orientation[object_id])
-            quaternions.append(r.as_quat())
-
-            _scale.append(scale[object_id])
-            _translation.append(translation[object_id])
-
+            visible_crop_img.append(crop_tmp)
+            visible_point_2d.append(keypoints_2d[obj])
+            visible_trans.append(translation[obj])
+            visible_quat.append(quaternions[obj])
+            visible_scale.append(scale[obj])
+            
+        # shallow copy
         outputs = inputs.copy()
-        outputs['crop_img'] = np.stack(crop_img, axis=0)
-        outputs[Schema.TRANSLATION] = _translation
-        outputs[Schema.SCALE] = _scale
-        outputs[Schema.ORIENTATION] = quaternions
-        outputs[Schema.VISIBILITY] = th.as_tensor(inputs[Schema.VISIBILITY]).reshape(-1,1)
-        # print([(k, v.shape) if isinstance(v, th.Tensor) else (k,v) for k,v in outputs.items()])
+        outputs[Schema.CROPPED_IMAGE] = th.stack(visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
+        outputs[Schema.KEYPOINT_2D] = th.stack(visible_point_2d).reshape(-1, num_vertices, 3)
+        outputs[Schema.TRANSLATION] = th.stack(visible_trans).reshape(-1, 3)
+        outputs[Schema.QUATERNION] = th.stack(visible_quat).reshape(-1, 4)
+        outputs[Schema.SCALE] = th.stack(visible_scale).reshape(-1, 3)
 
         return outputs
+

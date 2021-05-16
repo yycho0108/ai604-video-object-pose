@@ -26,8 +26,9 @@ class Schema(Enum):
     DISPLACEMENT_MAP = "displacement_map"
     KEYPOINT_HEATMAP = "keypoint_heatmap"
     KEYPOINT_NUM = "point_num"
-    VISIBILITY = "visibility"
-    KEYPOINT_OFFSET = "keypoint_offset"
+    CROPPED_IMAGE = "crop_img"
+    VISIBILITY = "object/visibility"
+    QUATERNION = "quaternion"
 
 
 @encode.register(Schema)

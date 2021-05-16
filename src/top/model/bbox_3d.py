@@ -56,10 +56,10 @@ class BoundingBoxRegressionModel(nn.Module):
                     nn.Flatten(),
                     nn.Linear(256 * 7 * 7, 256),
                     nn.ReLU(True),
-                    nn.Dropout(),
+                    # nn.Dropout(),
                     nn.Linear(256, 256),
                     nn.ReLU(True),
-                    nn.Dropout(),
+                    # nn.Dropout(),
                     nn.Linear(256, 4)
                 )
 
@@ -68,10 +68,10 @@ class BoundingBoxRegressionModel(nn.Module):
                     nn.Flatten(),
                     nn.Linear(256 * 7 * 7, 256),
                     nn.ReLU(True),
-                    nn.Dropout(),
+                    # nn.Dropout(),
                     nn.Linear(256, 256),
                     nn.ReLU(True),
-                    nn.Dropout(),
+                    # nn.Dropout(),
                     nn.Linear(256, 3)
                 )
 

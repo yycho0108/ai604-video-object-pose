@@ -78,7 +78,7 @@ class InstancePadding:
             # Schema.KEYPOINT_MAP,
             # Schema.DISPLACEMENT_MAP,
             Schema.KEYPOINT_NUM,  # I guess this is needed too...
-            Schema.VISIBILITY
+            Schema.CROPPED_IMAGE
         )
 
     def __init__(self, opts: Settings):
