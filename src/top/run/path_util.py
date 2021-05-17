@@ -7,9 +7,7 @@ from dataclasses import dataclass
 
 
 def _ensure_directory(path: str):
-    """
-    Ensure that the directory structure exists.
-    """
+    """Ensure that the directory structure exists."""
     path = Path(path)
     if path.is_dir():
         return
@@ -23,8 +21,7 @@ def _ensure_directory(path: str):
 
 
 class RunPath(object):
-    """
-    General path management over multiple experiment runs.
+    """General path management over multiple experiment runs.
 
     NOTE(ycho): The intent of this class is mainly to avoid overwriting
     checkpoints and existing logs from a previous run -
@@ -55,7 +52,7 @@ class RunPath(object):
 
     @staticmethod
     def _resolve_key(root: str, key_fmt: str) -> str:
-        """ Get latest valid key according to `key_fmt` """
+        """Get latest valid key according to `key_fmt`"""
         # Ensure `root` is a valid directory.
         root = Path(root)
         if not root.is_dir():
@@ -72,10 +69,19 @@ class RunPath(object):
         return key
 
     def __getattr__(self, key: str):
-        """ Convenient shorthand for fetching valid subdirectories. """
+        """Convenient shorthand for fetching valid subdirectories."""
         out = self.dir / key
         _ensure_directory(out)
         return out
+
+
+def get_latest_file(path: Path, pattern: str = '*'):
+    path = Path(path)
+    if not path.is_dir():
+        raise ValueError(F'path {path} is not a directory.')
+    latest_file = max(path.glob(pattern),
+                      key=lambda p: p.stat().st_mtime)
+    return latest_file
 
 
 def main():
