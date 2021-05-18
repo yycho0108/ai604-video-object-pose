@@ -106,25 +106,17 @@ def compute_pose_epnp(
         *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))
     points_3d = np.insert(points_3d, 0, [0, 0, 0], axis=0)
     points_3d = th.as_tensor(points_3d, dtype=th.float32)
-
-    print('p3d', points_3d.shape)  # 9,3
-    print('p2d', points_2d.shape)  # 9,?,3
-    print('scale', scale.shape)  # 4,3
-    points_3d = points_3d[:,
-                          None] * th.as_tensor(scale,
-                                               device=points_3d.device)
+    points_3d = (points_3d[:, None] * th.as_tensor(scale,
+                                                   device=points_3d.device))
 
     # Restore NDC convention + scaling + account for intrinsic matrix
     # FIXME(ycho): Maybe a more principled unprojection would be needed
     # in case of nontrivial camer matrices.
-    print(intrinsic_matrix.shape)
     points_2d = points_2d.clone()
     points_2d -= 0.5  # [0,1] -> [-0.5, 0.5]
     points_2d *= -2.0 / intrinsic_matrix[(0, 1), (1, 0)]
-    # print('points_2d', points_2d)
 
-    print(points_3d.shape)
-    print(points_2d.shape)
+    # NOTE(ycho): PNP occasionally (quite often)? fails.
     try:
         solution = efficient_pnp(
             points_3d.transpose(
@@ -180,8 +172,7 @@ def main():
                 for (k, v) in data.items()}
         image = data[Schema.IMAGE]
         image_scale = th.as_tensor(image.shape[-2:])  # (h,w) order
-        print('# instances = {}'.format(data[Schema.INSTANCE_NUM]))  # ==2
-
+        print('# instances = {}'.format(data[Schema.INSTANCE_NUM]))
         with th.no_grad():
             outputs = model(image)
 
@@ -191,7 +182,6 @@ def main():
             # FIXME(ycho): hardcoded obj==1 assumption
             scores, indices = decode_kpt_heatmap(
                 kpt_heatmap, max_num_instance=4)
-            print('scores', scores)
 
             # hmm...
             upsample_ratio = th.as_tensor(

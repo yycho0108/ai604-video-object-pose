@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""
-Set of commonly transforms for which there is no clear alternative location.
-"""
+"""Set of commonly transforms for which there is no clear alternative
+location."""
 
 __all__ = ['Normalize', 'InstancePadding']
 
@@ -27,9 +26,8 @@ from top.data.schema import Schema
 
 
 class Normalize:
-    """
-    Lightweight wrapper around torchvision.transforms.Normalize
-    to reason with dictionary-valued inputs.
+    """Lightweight wrapper around torchvision.transforms.Normalize to reason
+    with dictionary-valued inputs.
 
     NOTE(ycho): Expects image in UINT8 form!
     """
@@ -61,10 +59,8 @@ class Normalize:
 
 
 class InstancePadding:
-    """
-    Class for padding variable number of object instances in a frame to some
-    pre-defined maximum allowable number of instances, for collation.
-    """
+    """Class for padding variable number of object instances in a frame to some
+    pre-defined maximum allowable number of instances, for collation."""
     @dataclass
     class Settings(Serializable):
         max_num_inst: int = 4
@@ -78,7 +74,8 @@ class InstancePadding:
             # Schema.KEYPOINT_MAP,
             # Schema.DISPLACEMENT_MAP,
             Schema.KEYPOINT_NUM,  # I guess this is needed too...
-            Schema.CROPPED_IMAGE
+            Schema.CROPPED_IMAGE,
+            Schema.VISIBILITY  # This is OK because by zero-padded visibility=false
         )
 
     def __init__(self, opts: Settings):

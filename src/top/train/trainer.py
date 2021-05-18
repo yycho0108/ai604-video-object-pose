@@ -16,8 +16,8 @@ from top.train.event.topics import Topic
 
 
 class Trainer(object):
-    """
-    Generic trainer for a pytorch nn.Module.
+    """Generic trainer for a pytorch nn.Module.
+
     Intended to be flexible, modify as needed.
     """
 
@@ -60,9 +60,7 @@ class Trainer(object):
         self.loader = loader
 
     def _train(self):
-        """
-        Internal function for dealing with the inner training loop.
-        """
+        """Internal function for dealing with the inner training loop."""
         step = 0
         for epoch in range(self.opts.num_epochs):
             self.hub.publish(Topic.EPOCH, epoch)
@@ -104,7 +102,7 @@ class Trainer(object):
 
 
 def main():
-    """ Simplest possible trainer setup """
+    """Simplest possible trainer setup."""
     model = th.nn.Linear(1, 1)
     optim = th.optim.Adam(model.parameters(), lr=1e-3)
 

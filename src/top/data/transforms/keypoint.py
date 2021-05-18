@@ -133,7 +133,7 @@ class DenseMapsMobilePose:
         h = h // self.opts.downsample
         w = w // self.opts.downsample
 
-        keypoints_2d = (th.as_tensor(keypoints_2d_uv) *
+        keypoints_2d = (keypoints_2d_uv *
                         th.as_tensor([w, h, 1.0], device=keypoints_2d_uv.device))
 
         # TODO(ycho): Resolve ambiguous naming convention.
@@ -283,19 +283,22 @@ class BoxHeatmap:
     def __call__(self, inputs):
         # Parse inputs.
         h, w = inputs[Schema.IMAGE].shape[-2:]
-        R = th.as_tensor(inputs[Schema.ORIENTATION])
-        T = th.as_tensor(inputs[Schema.TRANSLATION])
-        S = th.as_tensor(inputs[Schema.SCALE])
-        P = th.as_tensor(inputs[Schema.PROJECTION])
+        rxn = th.as_tensor(inputs[Schema.ORIENTATION]).reshape(-1)
+        txn = th.as_tensor(inputs[Schema.TRANSLATION]).reshape(-1)
+        # FIXME(ycho): reshape(-1) required in case of multiple instances
+        scale = th.as_tensor(inputs[Schema.SCALE]).reshape(-1)
+        projection = th.as_tensor(inputs[Schema.PROJECTION])
         num_inst = inputs[Schema.INSTANCE_NUM]
 
         heatmaps = []
         n = int(num_inst)
         for i in range(n):
             # NOTE(ycho): Taking an instance-specific slice of batched input.
-            irxn = R[i * 9:(i + 1) * 9]
-            itxn = T[i * 3:(i + 1) * 3]
-            iscale = S[i * 3:(i + 1) * 3]
+            # TODO(ycho): Consider explicitly reshaping to include additional
+            # instance dimension.
+            irxn = rxn[i * 9:(i + 1) * 9]
+            itxn = txn[i * 3:(i + 1) * 3]
+            iscale = scale[i * 3:(i + 1) * 3]
 
             T_scale = th.eye(4)
             T_scale[(0, 1, 2), (0, 1, 2)] = iscale.reshape(3)
@@ -306,7 +309,7 @@ class BoxHeatmap:
             T_box[:3, -1] = itxn
 
             # Camera transforms
-            T_p = P.reshape(4, 4).float()
+            T_p = projection.reshape(4, 4).float()
 
             # Compose all transforms
             # NOTE(ycho): Looks like `camera/view` is not needed.

@@ -28,7 +28,7 @@ class DatasetOptions(enum.Enum):
 
 @encode.register(DatasetOptions)
 def encode_dataset_options(obj: DatasetOptions) -> str:
-    """Encode the enum with the underlying `str` representation. """
+    """Encode the enum with the underlying `str` representation."""
     return str(obj.value)
 
 
@@ -52,8 +52,8 @@ class DatasetSettings(Serializable):
 
 def get_dataset(opts: DatasetSettings, train: bool,
                 device: th.device, transform=None):
-    """
-    Get a train/test dataset according to the specified settings.
+    """Get a train/test dataset according to the specified settings.
+
     Provides a unified interface across multiple dataset types.
     Depending on the dataset type, some arguments are ignored.
     """
@@ -71,7 +71,7 @@ def get_dataset(opts: DatasetSettings, train: bool,
 
 def get_loaders(opts: DatasetSettings, device: th.device,
                 batch_size: int, transform=None, collate_fn=None):
-    """ Fetch pair of (train,test) loaders for MNIST data """
+    """Fetch pair of (train,test) loaders for MNIST data."""
 
     if opts.use_cached_dataset:
         # FIXME(ycho): Hardcoded names for cache files.
@@ -99,7 +99,7 @@ def get_loaders(opts: DatasetSettings, device: th.device,
         test_dataset,
         batch_size=batch_size,
         shuffle=opts.shuffle,
-        num_workers=opts.num_workers,
+        num_workers=0,
         collate_fn=collate_fn)
 
     return (train_loader, test_loader)
@@ -112,11 +112,11 @@ def collate_cropped_img(data):
     for d in data:
         if all(vis == 0 for vis in d[Schema.VISIBILITY]):
             continue
-        [out[k].append(v) for k,v in d.items()]
-    
+        [out[k].append(v) for k, v in d.items()]
+
     for k in out:
         v = out[k]
-        if len(v)>0 and isinstance(v[0], th.Tensor):
+        if len(v) > 0 and isinstance(v[0], th.Tensor):
             out[k] = th.cat(v, dim=0)
 
     return out
