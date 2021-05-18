@@ -14,6 +14,8 @@ from top.data.cached_dataset import CachedDataset
 
 from collections import defaultdict
 
+from top.data.schema import Schema
+
 
 # TODO(ycho): add objectron sequence as an option.
 class DatasetOptions(enum.Enum):
@@ -105,12 +107,16 @@ def get_loaders(opts: DatasetSettings, device: th.device,
 
 def collate_cropped_img(data):
     out = defaultdict(list)
+    # case that all objects in image are not visible
+    # TODO(Jiyong): If all objects in batch are not visible, how to handle?
     for d in data:
+        if all(vis == 0 for vis in d[Schema.VISIBILITY]):
+            continue
         [out[k].append(v) for k,v in d.items()]
     
     for k in out:
         v = out[k]
         if len(v)>0 and isinstance(v[0], th.Tensor):
             out[k] = th.cat(v, dim=0)
-    
+
     return out

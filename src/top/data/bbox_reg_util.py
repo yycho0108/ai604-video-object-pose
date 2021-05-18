@@ -151,9 +151,20 @@ class CropObject(object):
             visible_trans.append(translation[obj])
             visible_quat.append(quaternions[obj])
             visible_scale.append(scale[obj])
-            
+        
         # shallow copy
         outputs = inputs.copy()
+        # case that all objects in image are not visible
+        # TODO(Jiyong): If all objects in batch are not visible, how to handle?
+        if all(vis == 0 for vis in visibility):
+            outputs[Schema.CROPPED_IMAGE] = th.tensor(visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
+            outputs[Schema.KEYPOINT_2D] = th.tensor(visible_point_2d).reshape(-1, num_vertices, 3)
+            outputs[Schema.TRANSLATION] = th.tensor(visible_trans).reshape(-1, 3)
+            outputs[Schema.QUATERNION] = th.tensor(visible_quat).reshape(-1, 4)
+            outputs[Schema.SCALE] = th.tensor(visible_scale).reshape(-1, 3)
+
+            return outputs
+        
         outputs[Schema.CROPPED_IMAGE] = th.stack(visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
         outputs[Schema.KEYPOINT_2D] = th.stack(visible_point_2d).reshape(-1, num_vertices, 3)
         outputs[Schema.TRANSLATION] = th.stack(visible_trans).reshape(-1, 3)
