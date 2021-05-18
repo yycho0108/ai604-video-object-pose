@@ -107,7 +107,6 @@ class ObjectronDetection(th.utils.data.IterableDataset):
             'point_num',
             'camera/intrinsics',
             'camera/projection',
-            'object/visibility'
         )
         cache_dir = '~/.cache/ai604/'
 
