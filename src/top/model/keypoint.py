@@ -22,8 +22,6 @@ def _in_place_clipped_sigmoid(x: th.Tensor, eps: float):
     """
     return th.clamp(x.sigmoid_(), eps, 1.0 - eps)
 
-    # return x.sigmoid_().clip_(eps, 1.0 - eps)
-
 
 class KeypointNetwork2D(nn.Module):
     """Simple 2D Keypoint inference network."""
@@ -34,7 +32,6 @@ class KeypointNetwork2D(nn.Module):
         num_trainable_layers: int = 0
         returned_layers: Tuple[int, ...] = (4,)
         upsample: ConvUpsample.Settings = ConvUpsample.Settings()
-        # displacement: DisplacementLayer2D.Settings = DisplacementLayer2D.Settings()
         center: HeatmapLayer2D.Settings = HeatmapLayer2D.Settings()
         keypoint: KeypointLayer2D.Settings = KeypointLayer2D.Settings()
         # NOTE(ycho): upsample_steps < 5 results in downsampling.
@@ -64,7 +61,6 @@ class KeypointNetwork2D(nn.Module):
 
         self.center = HeatmapLayer2D(opts.center, c_in=c_in)
         self.keypoint = KeypointLayer2D(opts.keypoint, c_in=c_in)
-        # self.displacement = DisplacementLayer2D(opts.displacement, c_in=c_in)
 
     def forward(self, inputs):
         x = inputs
@@ -77,20 +73,15 @@ class KeypointNetwork2D(nn.Module):
 
         # Final outputs ...
         center_logits = self.center(x)
-
         center = _in_place_clipped_sigmoid(center_logits,
                                            self.opts.clip_sigmoid_eps)
 
-        # displacement_map = self.displacement(x)
         kpt_offset, kpt_heatmap = self.keypoint(x)
-
         kpt_heatmap = _in_place_clipped_sigmoid(kpt_heatmap,
                                                 self.opts.clip_sigmoid_eps)
 
         output = {
             Schema.HEATMAP: center,
-            # Schema.HEATMAP_LOGITS: heatmap_logits,
-            # Schema.DISPLACEMENT_MAP: displacement_map
             Schema.KEYPOINT_OFFSET: kpt_offset,
             Schema.KEYPOINT_HEATMAP: kpt_heatmap
         }

@@ -22,11 +22,13 @@ from top.train.event.helpers import (Collect, Periodic, Evaluator)
 from top.model.keypoint import KeypointNetwork2D
 from top.model.loss import ObjectHeatmapLoss, KeypointDisplacementLoss
 
+from top.data.transforms.augment import PhotometricAugment
 from top.data.transforms import (
     DenseMapsMobilePose,
     Normalize,
     InstancePadding,
-    DrawKeypointMap
+    DrawKeypointMap,
+    PhotometricAugment
 )
 from top.data.schema import Schema
 from top.data.load import (DatasetSettings, get_loaders)
@@ -58,9 +60,13 @@ class AppSettings(Serializable):
     # Evaluation interval / every N train steps
     eval_period: int = int(1e3)
 
+    # Auxiliary transform settings ...
     padding: InstancePadding.Settings = InstancePadding.Settings()
     maps: DenseMapsMobilePose.Settings = DenseMapsMobilePose.Settings()
+    photo_aug: PhotometricAugment.Settings = PhotometricAugment.Settings()
+
     profile: bool = False
+    load_ckpt: str = ''
 
 
 class TrainLogger:
@@ -91,7 +97,7 @@ class TrainLogger:
 
         # Update tqdm logger bar.
         self.tqdm.set_postfix(loss=loss)
-        self.tqdm.update()
+        self.tqdm.update(self.period)
 
     def _on_train_out(self, inputs, outputs):
         """log training outputs."""
@@ -158,7 +164,7 @@ class ModelAsTuple(th.nn.Module):
 
 
 def main():
-    # logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.WARN)
     opts = AppSettings()
     opts = update_settings(opts)
     path = RunPath(opts.path)
@@ -177,6 +183,7 @@ def main():
     # it would probably make it a lot faster to train...
     transform = Compose([
         DenseMapsMobilePose(opts.maps, data_device),
+        PhotometricAugment(opts.photo_aug, False),
         Normalize(Normalize.Settings()),
         InstancePadding(opts.padding)
     ])
@@ -285,6 +292,11 @@ def main():
         kpt_heatmap_loss = losses[Schema.KEYPOINT_HEATMAP](outputs, data)
         heatmap_loss = losses[Schema.HEATMAP](outputs, data)
         return (kpt_heatmap_loss + heatmap_loss)
+
+    ## Load from checkpoint
+    if opts.load_ckpt:
+        logging.info(F'Loading checkpoint {opts.load_ckpt} ...')
+        Saver(model, optimizer).load(opts.load_ckpt)
 
     ## Trainer
     trainer = Trainer(

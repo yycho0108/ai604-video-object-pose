@@ -24,7 +24,10 @@ class Trainer(object):
     @dataclass
     class Settings(Serializable):
         train_steps: int = int(1e4)
-        num_epochs: int = int(1)
+        # NOTE(ycho): Large # of epochs by default,
+        # Such that the tranining would *generally* terminate
+        # due to `train_steps`.
+        num_epochs: int = int(100)
 
     def __init__(self,
                  opts: Settings,
