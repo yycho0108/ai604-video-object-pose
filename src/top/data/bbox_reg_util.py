@@ -134,6 +134,7 @@ class CropObject(object):
         visible_trans = []
         visible_quat = []
         visible_scale = []
+        visible_box_2d = []
         
         for obj in range(num_object):
             # NOTE(Jiyion): If visiblity is false, cropping that object is impossible
@@ -151,6 +152,7 @@ class CropObject(object):
             visible_trans.append(translation[obj])
             visible_quat.append(quaternions[obj])
             visible_scale.append(scale[obj])
+            visible_box_2d.append(th.as_tensor([top, left, height, width]))
         
         # shallow copy
         outputs = inputs.copy()
@@ -162,6 +164,7 @@ class CropObject(object):
             outputs[Schema.TRANSLATION] = th.tensor(visible_trans).reshape(-1, 3)
             outputs[Schema.QUATERNION] = th.tensor(visible_quat).reshape(-1, 4)
             outputs[Schema.SCALE] = th.tensor(visible_scale).reshape(-1, 3)
+            outputs[Schema.BOX_2D] = th.tensor(visible_box_2d).reshape(-1, 4)
 
             return outputs
         
@@ -170,6 +173,7 @@ class CropObject(object):
         outputs[Schema.TRANSLATION] = th.stack(visible_trans).reshape(-1, 3)
         outputs[Schema.QUATERNION] = th.stack(visible_quat).reshape(-1, 4)
         outputs[Schema.SCALE] = th.stack(visible_scale).reshape(-1, 3)
+        outputs[Schema.BOX_2D] = th.stack(visible_box_2d).reshape(-1, 4)
 
         return outputs
 

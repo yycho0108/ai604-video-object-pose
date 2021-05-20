@@ -4,9 +4,11 @@ Code Reference: https://github.com/skhadem/3D-BoundingBox/blob/master/
 """
 
 from enum import Enum
+from itertools import permutations
 import numpy as np
 import cv2
-from pytorch3d.transforms import quaternion_to_matrix
+from scipy.spatial.transform import Rotation
+from simple_parsing.helpers.serialization.serializable import D
 
 
 class cv_colors(Enum):
@@ -19,17 +21,17 @@ class cv_colors(Enum):
     YELLOW = (2,255,250)
 
 def create_corners(dimension, location=None, R=None):
-    dx = dimension[2] / 2
-    dy = dimension[0] / 2
-    dz = dimension[1] / 2
+    dx = dimension[0] / 2
+    dy = dimension[1] / 2
+    dz = dimension[2] / 2
 
     x_corners = []
     y_corners = []
     z_corners = []
 
-    for i in [1, -1]:
-        for j in [1,-1]:
-            for k in [1,-1]:
+    for i in [-1, 1]:
+        for j in [-1, 1]:
+            for k in [-1, 1]:
                 x_corners.append(dx*i)
                 y_corners.append(dy*j)
                 z_corners.append(dz*k)
@@ -52,56 +54,66 @@ def create_corners(dimension, location=None, R=None):
     return final_corners
 
 
-def calc_location(box_2d, proj_matrix, dimension, quaternion):
+def calc_location(box_2d, intrinsic_matrix, dimension, quaternion):
     #global orientation
-    R = quaternion_to_matrix(quaternion)
+    r = Rotation.from_quat(quaternion)
+    R = r.as_matrix()
 
     # format 2d corners
-    # box_2d is [(xmin, ymin), (xmax, ymax)]
-    xmin = box_2d[0][0]
-    ymin = box_2d[0][1]
-    xmax = box_2d[1][0]
-    ymax = box_2d[1][1]
+    # box_2d is (top, left, height, width)
+    xmin = box_2d[1]
+    xmax = box_2d[3] + xmin
+    ymin = box_2d[0]
+    ymax = box_2d[2] + ymin
 
     # left top right bottom
     box_corners = [xmin, ymin, xmax, ymax]
 
-    # get the point constraints
-    constraints = []
+    # # get the point constraints
+    # constraints = []
 
-    left_constraints = []
-    right_constraints = []
-    top_constraints = []
-    bottom_constraints = []
+    # left_constraints = []
+    # right_constraints = []
+    # top_constraints = []
+    # bottom_constraints = []
 
     # using a different coord system
     dx = dimension[2] / 2
     dy = dimension[0] / 2
     dz = dimension[1] / 2
 
-    # left and right of object
-    for i in (-1,1):
-        left_constraints.append([dx, i*dy, -dz])
-    for i in (-1,1):
-        right_constraints.append([dx, i*dy, dz])
-
-    # top and bottom of object
+    vertices = []
     for i in (-1,1):
         for j in (-1,1):
-            top_constraints.append([i*dx, -dy, j*dz])
-    for i in (-1,1):
-        for j in (-1,1):
-            bottom_constraints.append([i*dx, dy, j*dz])
+            for k in (-1,1):
+                vertices.append([i*dx, j*dy, k*dz])
+    
+    constraints = list(permutations(vertices, 4))
+    print(len(constraints))
 
-    # now, 64 combinations
-    for left in left_constraints:
-        for top in top_constraints:
-            for right in right_constraints:
-                for bottom in bottom_constraints:
-                    constraints.append([left, top, right, bottom])
+    # # left and right of object
+    # for i in (-1,1):
+    #     left_constraints.append([dx, i*dy, -dz])
+    # for i in (-1,1):
+    #     right_constraints.append([dx, i*dy, dz])
+
+    # # top and bottom of object
+    # for i in (-1,1):
+    #     for j in (-1,1):
+    #         top_constraints.append([i*dx, -dy, j*dz])
+    # for i in (-1,1):
+    #     for j in (-1,1):
+    #         bottom_constraints.append([i*dx, dy, j*dz])
+
+    # # now, 64 combinations
+    # for left in left_constraints:
+    #     for top in top_constraints:
+    #         for right in right_constraints:
+    #             for bottom in bottom_constraints:
+    #                 constraints.append([left, top, right, bottom])
 
     # filter out the ones with repeats
-    constraints = filter(lambda x: len(x) == len(set(tuple(i) for i in x)), constraints)
+    # constraints = filter(lambda x: len(x) == len(set(tuple(i) for i in x)), constraints)
 
     # create pre M (the term with I and the R*X)
     pre_M = np.zeros([4,4])
@@ -110,7 +122,7 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion):
         pre_M[i][i] = 1
 
     best_loc = None
-    best_error = [1e09]
+    best_error = [np.inf]
     best_X = None
 
     # loop through each possible constraint, hold on to the best guess
@@ -146,7 +158,7 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion):
             RX = np.dot(R, X)
             M[:3,3] = RX.reshape(3)
 
-            M = np.dot(proj_matrix, M)
+            M = np.dot(intrinsic_matrix, M)
 
             A[row, :] = M[index,:3] - box_corners[row] * M[2,:3]
             b[row] = box_corners[row] * M[2,3] - M[index,3]
@@ -163,48 +175,85 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion):
 
     # return best_loc, [left_constraints, right_constraints] # for debugging
     best_loc = [best_loc[0][0], best_loc[1][0], best_loc[2][0]]
+    print("lstsq error:", best_error)
     return best_loc, best_X
 
-def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion):
-    location, X = calc_location(box_2d, proj_matrix, dimension, quaternion)
-    rotation = quaternion_to_matrix(quaternion)
-    plot_3d_box(img, proj_matrix, rotation, dimension, location)
-
-    return location
-
-def plot_3d_box(img, cam_to_img, rotation, dimension, center):
-
-    # takes in a 3d point and projects it into 2d
-    def project_3d_pt(pt, cam_to_img):
-        point = np.array(pt)
-        point = np.append(point, 1)
-        point = np.dot(cam_to_img, point)
-        point = point[:2]/point[2]
-        point = point.astype(np.int16)
-        return point
+def plot_3d_box(img, cam_to_img, rotation, dimension, center, pt):
+    c, h, w = img.shape
+    # # takes in a 3d point and projects it into 2d
+    # def project_3d_pt(pt, cam_to_img):
+    #     point = np.array(pt)
+    #     point = np.append(point, 1)
+    #     point = np.dot(cam_to_img, point)
+    #     print("Projected point:", point)
+    #     point = point[:2]/point[2]
+    #     point = point * [h, w]
+    #     point = point.astype(np.int16)
+    #     return point
     
-    corners = create_corners(dimension, location=center, R=rotation)
+    # corners = create_corners(dimension, location=center, R=rotation)
 
-    box_3d = []
-    for corner in corners:
-        point = project_3d_pt(corner, cam_to_img)
-        box_3d.append(point)
+    # box_3d = []
+    # for corner in corners:
+    #     print("corner:", corner)
+    #     point = project_3d_pt(corner, cam_to_img)
+    #     print("point:", point)
+    #     box_3d.append(point)
+
+    box_3d = pt[1:]
+    box_3d = box_3d.astype(np.int16)
 
     # TODO(Jiyong): put into loop
-    cv2.line(img, (box_3d[0][0], box_3d[0][1]), (box_3d[2][0],box_3d[2][1]), cv_colors.GREEN.value, 1)
-    cv2.line(img, (box_3d[4][0], box_3d[4][1]), (box_3d[6][0],box_3d[6][1]), cv_colors.GREEN.value, 1)
-    cv2.line(img, (box_3d[0][0], box_3d[0][1]), (box_3d[4][0],box_3d[4][1]), cv_colors.GREEN.value, 1)
-    cv2.line(img, (box_3d[2][0], box_3d[2][1]), (box_3d[6][0],box_3d[6][1]), cv_colors.GREEN.value, 1)
+    print(img)
+    print(img.shape)
+    print(type(img))
+    print(img.dtype)
+    print(box_3d)
+    print(box_3d[0][0])
 
-    cv2.line(img, (box_3d[1][0], box_3d[1][1]), (box_3d[3][0],box_3d[3][1]), cv_colors.GREEN.value, 1)
-    cv2.line(img, (box_3d[1][0], box_3d[1][1]), (box_3d[5][0],box_3d[5][1]), cv_colors.GREEN.value, 1)
-    cv2.line(img, (box_3d[7][0], box_3d[7][1]), (box_3d[3][0],box_3d[3][1]), cv_colors.GREEN.value, 1)
-    cv2.line(img, (box_3d[7][0], box_3d[7][1]), (box_3d[5][0],box_3d[5][1]), cv_colors.GREEN.value, 1)
+    img = img.reshape(h,w,c)
 
-    for i in range(0,7,2):
-        cv2.line(img, (box_3d[i][0], box_3d[i][1]), (box_3d[i+1][0],box_3d[i+1][1]), cv_colors.GREEN.value, 1)
+    # draw points
+    for kp in box_3d:
+        cv2.circle(img, (kp[0], kp[1]), 3, cv_colors.RED.value, 3)
+    # draw edges
+    # lines along x-axis
+    img = cv2.line(img, (box_3d[0][0], box_3d[0][1]), (box_3d[4][0],box_3d[4][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[1][0], box_3d[1][1]), (box_3d[5][0],box_3d[5][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[2][0], box_3d[2][1]), (box_3d[6][0],box_3d[6][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[3][0], box_3d[3][1]), (box_3d[7][0],box_3d[7][1]), cv_colors.RED.value, 1)
+    # lines along y-axis
+    img = cv2.line(img, (box_3d[0][0], box_3d[0][1]), (box_3d[2][0],box_3d[2][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[4][0], box_3d[4][1]), (box_3d[6][0],box_3d[6][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[1][0], box_3d[1][1]), (box_3d[3][0],box_3d[3][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[5][0], box_3d[5][1]), (box_3d[7][0],box_3d[7][1]), cv_colors.RED.value, 1)
+    # lines along z-axis
+    img = cv2.line(img, (box_3d[0][0], box_3d[0][1]), (box_3d[1][0],box_3d[1][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[2][0], box_3d[2][1]), (box_3d[3][0],box_3d[3][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[4][0], box_3d[4][1]), (box_3d[5][0],box_3d[5][1]), cv_colors.RED.value, 1)
+    img = cv2.line(img, (box_3d[6][0], box_3d[6][1]), (box_3d[7][0],box_3d[7][1]), cv_colors.RED.value, 1)
 
-    front_mark = [(box_3d[i][0], box_3d[i][1]) for i in range(4)]
+    img = img.reshape(c,h,w)
 
-    cv2.line(img, front_mark[0], front_mark[3], cv_colors.BLUE.value, 1)
-    cv2.line(img, front_mark[1], front_mark[2], cv_colors.BLUE.value, 1)
+    return img
+
+def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion, pt, translations=None):
+    location, X = calc_location(box_2d, proj_matrix, dimension, quaternion)
+    rotation = Rotation.from_quat(quaternion)
+    rotation = rotation.as_matrix()
+    # # c, h, w = img.shape
+    # # img = np.array(img/255., dtype=np.float32)
+    # # img = img.transpose(1,2,0) # (h,w,c)
+    # # img = img.reshape(h,w,c) # (h,w,c)
+    # # assert img.flags['C_CONTIGUOUS'] == True
+    # # img = Image.fromarray(img.astype(np.uint8))
+    # if translations is not None:
+    #     img = plot_3d_box(img, proj_matrix, rotation, dimension, translations)
+    # else:
+    #     img = plot_3d_box(img, proj_matrix, rotation, dimension, location)
+    # # img = np.array(img*255., dtype=np.int)
+    # # img = img.transpose(2,0,1) # (c,h,w)
+    # # img = img.reshape(c,h,w)
+
+    img = plot_3d_box(img, proj_matrix, rotation, dimension, location, pt)
+    return img

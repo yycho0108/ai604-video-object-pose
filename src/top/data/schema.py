@@ -30,6 +30,8 @@ class Schema(Enum):
     VISIBILITY = "object/visibility"
     QUATERNION = "quaternion"
     KEYPOINT_OFFSET = "keypoint_offset"
+    BOX_2D = "box_2d"
+    INTRINSIC_MATRIX = "camera/intrinsics"
 
 
 @encode.register(Schema)
