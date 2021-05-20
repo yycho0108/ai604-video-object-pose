@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""
-Set of transforms related to data augmentation.
-"""
+"""Set of transforms related to data augmentation."""
 
 __all__ = ['PhotometricAugment']
 
 from dataclasses import dataclass
 from simple_parsing import Serializable
-from typing import Tuple
+from typing import Tuple, Dict, Hashable
 
 import torch as th
 import torch.nn as nn
@@ -18,15 +16,15 @@ from top.data.schema import Schema
 
 
 class PhotometricAugment:
-    """
-    Apply photometric augmentation.
-    """
+    """Apply photometric augmentation."""
     @dataclass
     class Settings(Serializable):
-        brightness: Tuple[float, float] = (0.4, 1.5)
-        contrast: Tuple[float, float] = (0.6, 1.5)
-        saturation: Tuple[float, float] = (0.2, 2.0)
-        hue: Tuple[float, float] = (-0.3, 0.3)
+        brightness: Tuple[float, float] = (0.6, 1.6)
+        contrast: Tuple[float, float] = (0.6, 1.6)
+        saturation: Tuple[float, float] = (0.6, 1.6)
+        hue: Tuple[float, float] = (-0.2, 0.2)
+        key_in: Schema = Schema.IMAGE
+        key_out: Schema = Schema.IMAGE
 
     def __init__(self, opts: Settings, in_place: bool = True):
         self.opts = opts
@@ -37,23 +35,22 @@ class PhotometricAugment:
             saturation=opts.saturation,
             hue=opts.hue)
 
-    def __call__(self, inputs):
+    def __call__(self, inputs: Dict[Hashable, th.Tensor]):
         if inputs is None:
             return None
-        context, features = inputs
-        image = features['image']
 
         # NOTE(ycho): Shallow copy but pedantically safer
-        if not self.in_place:
-            features = features.copy()
+        if self.in_place:
+            outputs = inputs
+        else:
+            outputs = inputs.copy()
 
-        augmented_image = self.xfm(features['image'])
-        features['image'] = augmented_image
-        return (context, features)
+        augmented_image = self.xfm(outputs[self.opts.key_in])
+        outputs[self.opts.key_out] = augmented_image
+        return inputs
 
 
 def main():
-
     from top.data.objectron_sequence import (
         ObjectronSequence,
         SampleObjectron,

@@ -46,7 +46,10 @@ def decode(example, feature_names: List[str] = []):
     points = points.reshape(num_instances, NUM_KEYPOINTS, 3)
 
     # NOTE(ycho): Loading directly with torch to avoid warnings with PIL.
-    image = thio.decode_image(th.from_numpy(example['image/encoded']))
+    image_bytes = example['image/encoded']
+    # NOTE(ycho): Workaround to suppress negligible torch warnings
+    image_bytes.setflags(write=True)
+    image = thio.decode_image(th.from_numpy())
 
     translation = example['object/translation'].reshape(num_instances, 3)
     orientation = example['object/orientation'].reshape(num_instances, 9)
