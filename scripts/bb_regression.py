@@ -7,9 +7,11 @@ Reference:
     https://github.com/skhadem/3D-BoundingBox
 """
 
+import logging
 from dataclasses import dataclass, replace
 from simple_parsing import Serializable
 from typing import Tuple, Dict, Any
+import torch.autograd.profiler as profiler
 from tqdm.auto import tqdm
 
 import torch as th
@@ -27,6 +29,7 @@ from top.train.event.helpers import (Collect, Periodic, Evaluator)
 from top.run.app_util import update_settings
 from top.run.path_util import RunPath
 from top.run.torch_util import resolve_device
+from top.run.draw_regressed_bbox import plot_regressed_3d_bbox
 
 from top.model.bbox_3d import BoundingBoxRegressionModel
 
@@ -43,14 +46,17 @@ class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-box')
-    train: Trainer.Settings = Trainer.Settings(train_steps=10000)
+    train: Trainer.Settings = Trainer.Settings(train_steps=1000)
     # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 8
     alpha: float = 0.5
     device: str = 'cuda'
     log_period: int = 32
-    save_period: int = 100
-    eval_period: int = 100
+    save_period: int = 1000
+    eval_period: int = 1000
+
+    profile: bool = False
+    load_ckpt: str = ''
 
 
 class TrainLogger:
@@ -80,9 +86,49 @@ class TrainLogger:
         """log tranining outputs."""
         # Fetch inputs ...
         with th.no_grad():
-            input_image = (inputs(Schema.IMAGE).detach())
-        
-        self.writer.add_image('train_images', input_image[0].cpu(), global_step=self.step)
+            input_image = inputs[Schema.IMAGE].detach()
+            box_2d = outputs[Schema.BOX_2D]
+            intrinsic_matrix = outputs[Schema.INTRINSIC_MATRIX]
+            dimensions = outputs[Schema.SCALE].detach()
+            quaternion = outputs[Schema.QUATERNION].detach()
+            translations = outputs[Schema.TRANSLATION].detach()
+            proj_matrix = outputs[Schema.PROJECTION].detach()
+            keypoints_2d = outputs[Schema.KEYPOINT_2D].detach()
+            
+        # image_sample = th.clip(0.5 + (input_image[0:3] * 0.25), 0.0, 1.0).cpu()
+        image_sample = input_image[0:3].cpu()
+        image_sample = image_sample.numpy()
+        box_2d_sample = box_2d[0].cpu()
+        box_2d_sample = box_2d_sample.numpy()
+        intrinsic_matrix_sample = intrinsic_matrix[0:9].reshape(3,3).cpu()
+        intrinsic_matrix_sample = intrinsic_matrix_sample.numpy()
+        proj_matrix_sample = proj_matrix[0:16].reshape(4,4).cpu()
+        proj_matrix_sample = proj_matrix_sample[0:3, :]
+        proj_matrix_sample = proj_matrix_sample.numpy()
+        dimensions_sample = dimensions[0].cpu()
+        dimensions_sample = dimensions_sample.numpy()
+        quaternion_sample = quaternion[0].cpu()
+        quaternion_sample = quaternion_sample.numpy()
+        translations_sample = translations[0].cpu()
+        translations_sample = translations_sample.numpy()
+        print(input_image.shape)
+        print(image_sample.shape)
+        self.writer.add_image('train_images', image_sample, global_step=self.step)
+        print(box_2d_sample)
+        print(intrinsic_matrix_sample)
+        print(intrinsic_matrix)
+        print(proj_matrix)
+        print(proj_matrix_sample)
+        print(dimensions_sample)
+        print(quaternion_sample)
+
+        keypoints_2d_sample = keypoints_2d[0].cpu()
+        keypoints_2d_sample = keypoints_2d_sample.numpy()
+
+
+        image_with_box = plot_regressed_3d_bbox(image_sample, box_2d_sample, proj_matrix_sample, dimensions_sample, quaternion_sample, keypoints_2d_sample, translations_sample)
+        image_with_box = th.as_tensor(image_with_box)
+        self.writer.add_image('train_result_images', image_with_box, global_step=self.step)
 
     def _on_step(self, step):
         """save current step"""
@@ -99,7 +145,7 @@ class TrainLogger:
                
 
 def main():
-
+    logging.basicConfig(level=logging.WARN)
     opts = AppSettings()
     opts = update_settings(opts)
     path = RunPath(opts.path)
@@ -191,8 +237,29 @@ def main():
         truth_quat = truth_quat.view(-1,4)
         truth_dim = data[Schema.SCALE].to(device)
         truth_dim = truth_dim.view(-1,3)
+        truth_trans = data[Schema.TRANSLATION].to(device)
+        truth_trans = truth_trans.view(-1,3)
+        proj_matrix = data[Schema.PROJECTION].to(device)
+        intrinsic_matrix = data[Schema.INTRINSIC_MATRIX].to(device)
 
         dim, quat = model(image)
+
+        outputs = {}
+        outputs[Schema.BOX_2D] = data[Schema.BOX_2D]
+        outputs[Schema.INTRINSIC_MATRIX] = intrinsic_matrix
+        outputs[Schema.PROJECTION] = proj_matrix
+        # outputs[Schema.SCALE] = dim
+        outputs[Schema.SCALE] = truth_dim
+        # outputs[Schema.QUATERNION] = quat
+        outputs[Schema.QUATERNION] = truth_quat
+        outputs[Schema.TRANSLATION] = truth_trans
+        outputs[Schema.KEYPOINT_2D] = data[Schema.KEYPOINT_2D].to(device)
+
+        # Also make input/output pair from training
+        # iterations available to the event bus.
+        hub.publish(Topic.TRAIN_OUT,
+                    inputs = data,
+                    outputs = outputs)
 
         scale_loss = scale_loss_func(dim, truth_dim)
         orient_loss = orientation_loss_func(quat, truth_quat)
@@ -200,6 +267,12 @@ def main():
 
         return loss
 
+    ## Load from checkpoint
+    if opts.load_ckpt:
+        logging.info(F'Loading checkpoint {opts.load_ckpt} ...')
+        Saver(model, optimizer).load(opts.load_ckpt)
+
+    ## Trainer
     trainer = Trainer(opts.train,
                       model,
                       optimizer,
@@ -207,9 +280,19 @@ def main():
                       hub,
                       train_loader)
 
-    print('======Training Start======')
-    trainer.train()
-    print('======Training End======')
+    # Train, optionally profile
+    if opts.profile:
+        try:
+            with profiler.profile(record_shapes=True, use_cuda=True) as prof:
+                trainer.train()
+        finally:
+            print(
+                prof.key_averages().table(
+                    sort_by='cpu_time_total',
+                    row_limit=16))
+            prof.export_chrome_trace("/tmp/trace.json")
+    else:
+        trainer.train()
 
 
 if __name__ == '__main__':

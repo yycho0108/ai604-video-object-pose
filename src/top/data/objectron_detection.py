@@ -48,8 +48,8 @@ def decode(example, feature_names: List[str] = []):
     # NOTE(ycho): Loading directly with torch to avoid warnings with PIL.
     image_bytes = example['image/encoded']
     # NOTE(ycho): Workaround to suppress negligible torch warnings
-    image_bytes.setflags(write=True)
-    image = thio.decode_image(th.from_numpy())
+    # image_bytes.setflags(write=True)
+    image = thio.decode_image(th.from_numpy(image_bytes))
 
     translation = example['object/translation'].reshape(num_instances, 3)
     orientation = example['object/orientation'].reshape(num_instances, 9)
@@ -66,7 +66,8 @@ def decode(example, feature_names: List[str] = []):
         Schema.PROJECTION: th.as_tensor(example['camera/projection']),
         Schema.KEYPOINT_NUM: num_keypoints,
         Schema.VISIBILITY: visibility,
-        Schema.CLASS: bytes(example['object/name']).decode()
+        Schema.CLASS: bytes(example['object/name']).decode(),
+        Schema.INTRINSIC_MATRIX: th.as_tensor(example['camera/intrinsics'])
     }
 
     out.update({k: example[k] for k in feature_names})
