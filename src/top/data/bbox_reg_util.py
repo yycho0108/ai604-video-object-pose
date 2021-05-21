@@ -145,6 +145,10 @@ class CropObject(object):
             left = int(keypoint_2d_min[obj][0])
             height = int(keypoint_2d_max[obj][1]) - int(keypoint_2d_min[obj][1])
             width = int(keypoint_2d_max[obj][0]) - int(keypoint_2d_min[obj][0])
+
+            # Occasionally we get an empty ROI due to floating-point precision
+            if width<=0 or height<=0:
+                continue
             crop_tmp = resized_crop(image, top, left, height, width, size=self.opts.crop_img_size)
 
             visible_crop_img.append(crop_tmp)
