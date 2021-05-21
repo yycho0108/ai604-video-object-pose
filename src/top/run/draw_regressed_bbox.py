@@ -7,8 +7,9 @@ from enum import Enum
 from itertools import permutations
 import numpy as np
 import cv2
-from scipy.spatial.transform import Rotation
+import torch as th
 from simple_parsing.helpers.serialization.serializable import D
+from pytorch3d.transforms.rotation_conversions import quaternion_to_matrix
 
 
 class cv_colors(Enum):
@@ -56,8 +57,7 @@ def create_corners(dimension, location=None, R=None):
 
 def calc_location(box_2d, intrinsic_matrix, dimension, quaternion):
     #global orientation
-    r = Rotation.from_quat(quaternion)
-    R = r.as_matrix()
+    R = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
 
     # format 2d corners
     # box_2d is (top, left, height, width)
@@ -211,7 +211,10 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center, pt):
     print(box_3d)
     print(box_3d[0][0])
 
-    img = img.reshape(h,w,c)
+    # CHW -> HWC
+    if isinstance(img, th.Tensor):
+        img = img.detach().cpu().numpy()
+    img = np.ascontiguousarray(img.transpose(1,2,0))
 
     # draw points
     for kp in box_3d:
@@ -233,14 +236,14 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center, pt):
     img = cv2.line(img, (box_3d[4][0], box_3d[4][1]), (box_3d[5][0],box_3d[5][1]), cv_colors.RED.value, 1)
     img = cv2.line(img, (box_3d[6][0], box_3d[6][1]), (box_3d[7][0],box_3d[7][1]), cv_colors.RED.value, 1)
 
-    img = img.reshape(c,h,w)
+    # HWC -> CHW
+    img = img.transpose(2,0,1)
 
     return img
 
 def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion, pt, translations=None):
     location, X = calc_location(box_2d, proj_matrix, dimension, quaternion)
-    rotation = Rotation.from_quat(quaternion)
-    rotation = rotation.as_matrix()
+    rotation = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
     # # c, h, w = img.shape
     # # img = np.array(img/255., dtype=np.float32)
     # # img = img.transpose(1,2,0) # (h,w,c)

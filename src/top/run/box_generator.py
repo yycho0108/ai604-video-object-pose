@@ -6,7 +6,8 @@ Reference: https://github.com/google-research-datasets/Objectron/blob/master/obj
 
 import numpy as np
 from numpy.linalg import lstsq
-from scipy.spatial.transform import Rotation
+import torch as th
+from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
 
 EDGES = ([1, 5], [2, 6], [3, 7], [4, 8],  # lines along x-axis
          [1, 3], [5, 7], [2, 4], [6, 8],  # lines along y-axis
@@ -58,7 +59,7 @@ class Box(object):
             raise ValueError('Unsupported rotation, only 3x1 euler angles or 3x3 '
                              + 'rotation matrices are supported. ' + rotation)
         if rotation.size == 3:
-            rotation = Rotation.from_rotvec(rotation.tolist()).as_dcm()
+            rotation = axis_angle_to_matrix(th.as_tensor(rotation)).cpu().numpy()
         scaled_identity_box = cls.scaled_axis_aligned_vertices(scale)
         vertices = np.zeros((NUM_KEYPOINTS, 3))
         for i in range(NUM_KEYPOINTS):
