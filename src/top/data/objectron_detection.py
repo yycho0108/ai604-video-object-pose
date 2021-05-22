@@ -64,8 +64,8 @@ def decode(example, feature_names: List[str] = []):
         Schema.ORIENTATION: th.as_tensor(orientation),
         Schema.SCALE: th.as_tensor(scale),
         Schema.PROJECTION: th.as_tensor(example['camera/projection']),
-        Schema.KEYPOINT_NUM: num_keypoints,
-        Schema.VISIBILITY: visibility,
+        Schema.KEYPOINT_NUM: th.as_tensor(num_keypoints),
+        Schema.VISIBILITY: th.as_tensor(visibility),
         Schema.CLASS: bytes(example['object/name']).decode(),
         Schema.INTRINSIC_MATRIX: th.as_tensor(example['camera/intrinsics'])
     }

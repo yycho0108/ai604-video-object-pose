@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Set of transforms related to keypoints."""
 
-__all__ = ['DenseMapsMobilePose', 'BoxHeatmap']
+__all__ = ['DenseMapsMobilePose', 'BoxPoints2D']
 
 import itertools
 from dataclasses import dataclass
@@ -261,16 +261,17 @@ class DenseMapsMobilePose:
         return outputs
 
 
-class BoxHeatmap:
-    """Legacy implementation for heatmap computation from object bounding box.
+class BoxPoints2D:
+    """Convert Bounding Box parameters into normalized keypoint locations.
 
-    NOTE(ycho): Currently left here for archival purposes for referring to the
-    explicit stages of the transform that the object parameter
-    undergoes in order for the resulting projection to be valid.
+    This class was drafted to match the same transformation conventiono
+    as the output from the `Objectron` dataset.
     """
 
-    def __init__(self, device: th.device):
+    def __init__(self, device: th.device,
+                 key_out: Hashable = 'points_2d_debug'):
         self.device = device
+        self.key_out = key_out
         vertices = list(itertools.product(
             *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))  # 8x3
         # NOTE(ycho): prepending centroid.
@@ -280,66 +281,40 @@ class BoxHeatmap:
         self.vertices = vertices
         self.colors = colors
 
-    def __call__(self, inputs):
+    def __call__(self, inputs: Dict[Hashable, th.Tensor]):
+        outputs = inputs.copy()
+
         # Parse inputs.
         h, w = inputs[Schema.IMAGE].shape[-2:]
-        rxn = th.as_tensor(inputs[Schema.ORIENTATION]).reshape(-1)
-        txn = th.as_tensor(inputs[Schema.TRANSLATION]).reshape(-1)
-        # FIXME(ycho): reshape(-1) required in case of multiple instances
-        scale = th.as_tensor(inputs[Schema.SCALE]).reshape(-1)
+        rxn = th.as_tensor(inputs[Schema.ORIENTATION]).reshape(-1, 3, 3)
+        txn = th.as_tensor(inputs[Schema.TRANSLATION]).reshape(-1, 3)
+        scale = th.as_tensor(inputs[Schema.SCALE]).reshape(-1, 3)
         projection = th.as_tensor(inputs[Schema.PROJECTION])
         num_inst = inputs[Schema.INSTANCE_NUM]
 
-        heatmaps = []
-        n = int(num_inst)
-        for i in range(n):
-            # NOTE(ycho): Taking an instance-specific slice of batched input.
-            # TODO(ycho): Consider explicitly reshaping to include additional
-            # instance dimension.
-            irxn = rxn[i * 9:(i + 1) * 9]
-            itxn = txn[i * 3:(i + 1) * 3]
-            iscale = scale[i * 3:(i + 1) * 3]
+        # Format bounding-box transform.
+        # TODO(ycho): Consider replacing `matmul` to a more robust alternative.
+        T_box = th.zeros((num_inst, 4, 4), dtype=th.float32, device=rxn.device)
+        T_box[..., :3, :3] = th.matmul(rxn, th.diag_embed(scale))
+        T_box[..., :3, -1] = txn
+        T_box[..., 3, 3] = 1
+        T_p = projection.reshape(4, 4)
+        T = th.matmul(T_p, T_box)
 
-            T_scale = th.eye(4)
-            T_scale[(0, 1, 2), (0, 1, 2)] = iscale.reshape(3)
+        # Apply the aggregated transforms and project to the camera plane.
+        # NOTE(ycho): We preserve the metric `depth` as the last element of the
+        # feature dimension, just like `Objectron`.
+        # The einsum here simply denotes batchwise inner product where the
+        # second operand is broadcasted to match the first.
+        v = th.einsum('...ab, kb -> ...ka',
+                      T[..., :3, :3], self.vertices) + T[..., None, :3, -1]
+        v[..., :-1] /= v[..., -1:]
 
-            # BBOX3D transform
-            T_box = th.eye(4)
-            T_box[:3, :3] = irxn.reshape(3, 3)
-            T_box[:3, -1] = itxn
+        # NDC (-1~1) -> UV (0~1) coordinates
+        v[..., :-1] = 0.5 + 0.5 * v[..., :-1]
+        # FIXME(ycho): This flipping is technically a bug accounting for the
+        # inconsistency in the keypoint convention from the objectron dataset.
+        v[..., :2] = th.flip(v[..., :2], dims=(-1,))
 
-            # Camera transforms
-            T_p = projection.reshape(4, 4).float()
-
-            # Compose all transforms
-            # NOTE(ycho): Looks like `camera/view` is not needed.
-            # Perhaps it's been fused into
-            # object/{translation,orientation}.
-            T = T_p @ T_box @ T_scale
-
-            # Apply transform.
-            # NOTE(ycho): skipping division on the last axis here.
-            v = self.vertices @ T[:3, :3].T + T[:3, -1]
-            v[..., :-1] /= v[..., -1:]
-
-            # NDC -> Screen coordinates
-            v[..., 0] = (1 + v[..., 0]) * (0.5 * h)
-            v[..., 1] = (1 + v[..., 1]) * (0.5 * w)
-            y, x = v[..., 0], v[..., 1]
-
-            # TODO(ycho): avoid unnecessary use of cv2 here
-            heatmap = th.zeros_like(inputs[Schema.IMAGE])
-            for j, (px, py) in enumerate(zip(x, y)):
-                if px < 0 or px >= w or py < 0 or py >= h:
-                    continue
-                # cv2.circle(heatmap, (int(px), int(py)), 16, (0, 0, 255), -1)
-                heatmap[...,
-                        int(py) - 1:int(py) + 1,
-                        int(px) - 1:int(px) + 1] = 255.0 * self.colors[j][:,
-                                                                          None,
-                                                                          None]  # 255
-            heatmaps.append(heatmap)
-
-        heatmaps = th.stack(heatmaps, dim=0)  # CHW, where C == num instances
-        inputs[Schema.KEYPOINT_MAP] = heatmaps
-        return inputs
+        outputs[self.key_out] = v
+        return outputs
