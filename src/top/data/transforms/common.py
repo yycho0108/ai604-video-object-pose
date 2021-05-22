@@ -59,11 +59,16 @@ class Normalize:
 
 
 class InstancePadding:
-    """Class for padding variable number of object instances in a frame to some
-    pre-defined maximum allowable number of instances, for collation."""
+    """Pad per-instance fields to a pre-set max size.
+
+    Class for padding variable number of object instances in a frame to
+    some pre-defined maximum allowable number of instances, for
+    collation.
+    """
     @dataclass
     class Settings(Serializable):
         max_num_inst: int = 4
+        instance_dim: bool = 0
         pad_keys: Tuple[Schema, ...] = (
             Schema.KEYPOINT_2D,
             Schema.KEYPOINT_3D,
@@ -83,12 +88,19 @@ class InstancePadding:
 
     def __call__(self, inputs: Dict[Schema, th.Tensor]):
         outputs = inputs.copy()
+        idim = self.opts.instance_dim
         for k in self.opts.pad_keys:
             if k not in inputs:
                 continue
-            pad = [0] * (2 * len(inputs[k].shape))
-            pad[-2] = int(self.opts.max_num_inst - inputs[Schema.INSTANCE_NUM])
-            x = th.as_tensor(inputs[k])
-            outputs[k] = F.pad(x, pad)
-            # logging.debug(F'PAD {k} {x.shape} -> {outputs[k].shape}')
+
+            # Compute output shape and allocate zero-filled tensor.
+            shape = inputs[k].shape
+            out_shape = list(shape)
+            out_shape[idim] = self.opts.max_num_inst
+            outputs[k] = th.as_tensor(inputs[k]).new_full(out_shape, 0)
+
+            # Format slice object and copy input.
+            s = [slice(None, None, None) for _ in range(len(shape))]
+            s[idim] = slice(None, shape[idim], None)
+            outputs[k][s] = inputs[k][s]
         return outputs

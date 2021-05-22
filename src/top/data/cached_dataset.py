@@ -37,7 +37,9 @@ class CachedDataset(th.utils.data.IterableDataset):
             # Download data from scratch ...
             dataset = self.dataset_fn()
             samples = []
-            for i, data in tqdm(enumerate(dataset)):
+            for i, data in tqdm(
+                    enumerate(dataset),
+                    total=self.opts.num_samples):
                 samples.append(data)
                 if i >= self.opts.num_samples:
                     break

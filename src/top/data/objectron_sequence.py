@@ -24,6 +24,7 @@ from tfrecord.reader import sequence_loader
 from google.cloud import storage
 
 from top.data.cached_dataset import CachedDataset
+from top.data.schema import Schema
 
 
 def _glob_objectron(bucket_name: str, prefix: str):
@@ -33,14 +34,12 @@ def _glob_objectron(bucket_name: str, prefix: str):
 
 
 class ObjectronSequence(th.utils.data.IterableDataset):
-    """
-    Objectron dataset (currently configured for loading sequences only).
-    """
+    """Objectron dataset (currently configured for loading sequences only)."""
 
     @dataclass
     class Settings(Serializable):
         bucket_name: str = 'objectron'
-        classes: Tuple[str] = (
+        classes: Tuple[str, ...] = (
             'bike',
             'book',
             'bottle',
@@ -50,12 +49,11 @@ class ObjectronSequence(th.utils.data.IterableDataset):
             'cup',
             'laptop',
             'shoe')
-        train: bool = True
         shuffle: bool = True
         # NOTE(ycho): Refer to objectron/schema/features.py
-        context: List[str] = ('count', 'sequence_id')
+        context: Tuple[str, ...] = ('count', 'sequence_id')
         # NOTE(ycho): Refer to objectron/schema/features.py
-        features: List[str] = (
+        features: Tuple[str, ...] = (
             'instance_num',
             'image/width',
             'image/height',
@@ -65,15 +63,28 @@ class ObjectronSequence(th.utils.data.IterableDataset):
             'object/translation',
             'object/orientation',
             'object/scale',
+            'object/visibility',
+            'point_3d',
+            'point_2d',
+            'point_num',
             'camera/intrinsics',
-            'camera/extrinsics',
             'camera/projection',
-            'camera/view',
         )
+        instance_features: Tuple[Schema, ...] = (
+            Schema.TRANSLATION,
+            Schema.ORIENTATION,
+            Schema.SCALE,
+            Schema.VISIBILITY,
+            Schema.KEYPOINT_2D,
+            Schema.KEYPOINT_3D,
+            Schema.CLASS
+        )
+
         cache_dir = '~/.cache/ai604/'
 
-    def __init__(self, opts: Settings, transform=None):
+    def __init__(self, opts: Settings, train: bool = True, transform=None):
         self.opts = opts
+        self.train = train
         self.shards = self._get_shards()
         self.xfm = transform
 
@@ -87,8 +98,8 @@ class ObjectronSequence(th.utils.data.IterableDataset):
         return self._class_map[idx]
 
     def _get_shards(self):
-        """ return list of shards, potentially memoized for efficiency """
-        prefix = 'train' if self.opts.train else 'test'
+        """return list of shards, potentially memoized for efficiency."""
+        prefix = 'train' if self.train else 'test'
         shards_cache = F'{self.opts.cache_dir}/{prefix}-shards.pkl'
 
         shards_path = Path(shards_cache).expanduser()
@@ -106,7 +117,7 @@ class ObjectronSequence(th.utils.data.IterableDataset):
         return shards
 
     def _glob(self) -> List[str]:
-        train_type = 'train' if self.opts.train else 'test'
+        train_type = 'train' if self.train else 'test'
         shards = []
 
         # Aggregate class shards
@@ -117,21 +128,16 @@ class ObjectronSequence(th.utils.data.IterableDataset):
         return shards
 
     def __iter__(self):
-        # Deal with parallelism...
-        # NOTE(ycho): harder to assume uncorrelated inputs
-        # without multiple workers loading from different shards
-        # on a single batch.
+        # Distribute shards among interleaved workers.
         worker_info = th.utils.data.get_worker_info()
         if worker_info is None:
             i0 = 0
-            i1 = len(self.shards)
+            step = 1
         else:
-            n = int(np.ceil(len(self.shards) / float(worker_info.num_workers)))
-            i0 = worker_info.id * n
-            i1 = min(len(self.shards), i0 + n)
+            i0 = worker_info.id
+            step = worker_info.num_workers
 
-        # Contiguous block slice among shards
-        for shard in self.shards[i0:i1]:
+        for shard in self.shards[i0::step]:
             # Resolve shard name relative to bucket.
             shard_name = F'gs://{self.opts.bucket_name}/{shard}'
 
@@ -145,6 +151,9 @@ class ObjectronSequence(th.utils.data.IterableDataset):
             # a custom fork of `tfrecord` package.
             # TODO(ycho): Protection on network error cases
             # Which will inevitably arise during long training
+            # TODO(ycho): Adapt this code block to be more like
+            # `ObjectronDetection` instead, to avoid dependency
+            # on torch_xla which is apparently buggy for jiyong.
             reader = sequence_loader(
                 shard_name, None, self.opts.context,
                 self.opts.features, None)
@@ -161,9 +170,55 @@ class ObjectronSequence(th.utils.data.IterableDataset):
                 classes = th.as_tensor(
                     [class_index for c in names],
                     dtype=th.int32)
+                # shape(classes) == (seq_len, instance_num)
+                classes = classes[:, None].expand(-1,
+                                                  int(features['instance_num'][0]))
                 features['object/class'] = classes
 
-                out = (context, features)
+                # Merge `context` and `features` into a single dict.
+                out = {**context, **features}
+
+                # Decode image.
+                out['image'] = th.stack(
+                    [thio.decode_image(th.from_numpy(img_bytes))
+                     for img_bytes in out['image/encoded']],
+                    dim=0)
+                del out['image/encoded']
+
+                # Replace any numpy array to th.Tensor.
+                out = {k: (th.from_numpy(v) if isinstance(v, np.ndarray) else v)
+                       for (k, v) in out.items()}
+
+                # Remap to schema-based keys instead of strings.
+                # NOTE(ycho): We choose to convert explicitly in case
+                # there's any inconsistency from our (arbitrary) string-defined
+                # enums to objectron-defined dataset schemas.
+                out = {
+                    Schema.IMAGE: out['image'],
+                    Schema.KEYPOINT_2D: out['point_2d'],
+                    Schema.INSTANCE_NUM: out['instance_num'],
+                    Schema.TRANSLATION: out['object/translation'],
+                    Schema.ORIENTATION: out['object/orientation'],
+                    Schema.SCALE: out['object/scale'],
+                    Schema.PROJECTION: out['camera/projection'],
+                    Schema.KEYPOINT_NUM: out['point_num'],
+                    Schema.VISIBILITY: out['object/visibility'],
+                    Schema.CLASS: out['object/class'],
+                    Schema.INTRINSIC_MATRIX: out['camera/intrinsics']
+                }
+
+                # Ensure instance dimensions are added for per-instance
+                # properties.
+                # FIXME(ycho): What if `instance_num` is not constant over a
+                # sequence?
+                # FIXME(ycho): This reshaping logic destroys all pre-existing
+                # structures, although the code is a bit simpler.
+                seq_len = out[Schema.IMAGE].shape[0]
+                num_instances = out[Schema.INSTANCE_NUM][0]
+                for k in self.opts.instance_features:
+                    if k not in out.keys():
+                        continue
+                    out[k] = out[k].reshape(seq_len, num_instances, -1)
 
                 # Apply optional transform on the data.
                 # NOTE(ycho): This step is mandatory if we'd like to convert the dataset
@@ -174,10 +229,10 @@ class ObjectronSequence(th.utils.data.IterableDataset):
 
 
 class SampleObjectron(th.utils.data.IterableDataset):
-    """
-    Class that behaves exactly like `Objectron`, except
-    this class loads from a locally cached data, for convenience.
-    Prefer this class for testing / validation / EDA.
+    """Class that behaves exactly like `Objectron`, except this class loads
+    from a locally cached data, for convenience. Prefer this class for testing.
+
+    / validation / EDA.
 
     @see CachedDataset, Objectron.
     """
@@ -186,15 +241,17 @@ class SampleObjectron(th.utils.data.IterableDataset):
         cache: CachedDataset.Settings = CachedDataset.Settings()
         objectron: ObjectronSequence.Settings = ObjectronSequence.Settings()
 
-    def __init__(self, opts: Settings, transform=None):
+    def __init__(self, opts: Settings, train: bool = True, transform=None):
         self.opts = opts
+        self.train = train
         # NOTE(ycho): delegate most of the heavy lifting
         # to `CachedDataset`.
-        prefix = 'train' if self.opts.objectron.train else 'test'
-        self.dataset = CachedDataset(opts.cache,
-                                     lambda: ObjectronSequence(self.opts.objectron),
-                                     F'{prefix}-sample',
-                                     transform=transform)
+        prefix = 'train' if self.train else 'test'
+        self.dataset = CachedDataset(
+            opts.cache,
+            lambda: ObjectronSequence(self.opts.objectron),
+            F'{prefix}-sample-seq',
+            transform=transform)
         self.xfm = transform
 
     def __iter__(self):
@@ -202,24 +259,32 @@ class SampleObjectron(th.utils.data.IterableDataset):
 
 
 def _skip_none(batch):
-    """ Wrapper around default_collate() for skipping `None`. """
+    """Wrapper around default_collate() for skipping `None`."""
     batch = [x for x in batch if (x is not None)]
     return th.utils.data.dataloader.default_collate(batch)
 
 
 def main():
-    opts = SampleObjectron.Settings()
+    from top.data.transforms.sequence import (CropSequence)
+    from top.data.transforms.common import InstancePadding
+    from top.run.app_util import update_settings
+    # opts = SampleObjectron.Settings()
+    opts = ObjectronSequence.Settings()
+    opts = update_settings(opts)
     xfm = transforms.Compose([
-        DecodeImage(size=(480, 640)),
-        ParseFixedLength(ParseFixedLength.Settings()),
+        CropSequence(CropSequence.Settings()),
+        InstancePadding(InstancePadding.Settings(instance_dim=1))
     ])
-    dataset = SampleObjectron(opts, xfm)
+    # dataset = SampleObjectron(opts, transform=xfm)
+    dataset = ObjectronSequence(opts, transform=xfm)
     loader = th.utils.data.DataLoader(
-        dataset, batch_size=2, num_workers=0,
+        dataset, batch_size=8, num_workers=0,
         collate_fn=_skip_none)
 
     for data in loader:
-        # print(data)
+        print(data[Schema.INSTANCE_NUM])
+        print({k: (v.shape if isinstance(v, th.Tensor) else v)
+               for k, v in data.items()})
         break
 
 
