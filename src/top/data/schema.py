@@ -32,6 +32,7 @@ class Schema(Enum):
     KEYPOINT_OFFSET = "keypoint_offset"
     BOX_2D = "box_2d"
     INTRINSIC_MATRIX = "camera/intrinsics"
+    CENTER_2D = "center_2d"
 
 
 @encode.register(Schema)

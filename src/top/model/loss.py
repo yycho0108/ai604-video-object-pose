@@ -92,3 +92,17 @@ class KeypointCrossEntropyLoss(nn.Module):
 
     def forward(self, output: th.Tensor, target: th.Tensor) -> float:
         return self.loss(output, target)
+
+
+class KeypointScaleLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, output: Dict[str, th.Tensor],
+                target: Dict[str, th.Tensor]) -> float:
+
+        # We extract the center from the input
+        keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]  # (B, O, 9, 2|3)
+        center_uv = keypoints_2d_uv[..., 0, :2]
+
+        pass

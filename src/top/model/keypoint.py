@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from top.model.backbone import resnet_fpn_backbone
 from top.model.layers import (
     KeypointLayer2D, HeatmapLayer2D, ConvUpsample,
-    DisplacementLayer2D)
+    DisplacementLayer2D, HeatmapCoordinatesLayer)
 from top.data.schema import Schema
 
 
@@ -34,6 +34,7 @@ class KeypointNetwork2D(nn.Module):
         upsample: ConvUpsample.Settings = ConvUpsample.Settings()
         center: HeatmapLayer2D.Settings = HeatmapLayer2D.Settings()
         keypoint: KeypointLayer2D.Settings = KeypointLayer2D.Settings()
+        coord: HeatmapCoordinatesLayer.Settings = HeatmapCoordinatesLayer.Settings()
         # NOTE(ycho): upsample_steps < 5 results in downsampling.
         upsample_steps: Tuple[int, ...] = (128, 64, 16)
 
@@ -60,7 +61,9 @@ class KeypointNetwork2D(nn.Module):
         self.upsample = nn.Sequential(*upsample_layers)
 
         self.center = HeatmapLayer2D(opts.center, c_in=c_in)
+        self.scale = nn.Conv2d(c_in, 3, 3, 1, 1)
         self.keypoint = KeypointLayer2D(opts.keypoint, c_in=c_in)
+        self.coord = HeatmapCoordinatesLayer(opts.coord)
 
     def forward(self, inputs):
         x = inputs
@@ -75,15 +78,20 @@ class KeypointNetwork2D(nn.Module):
         center_logits = self.center(x)
         center = _in_place_clipped_sigmoid(center_logits,
                                            self.opts.clip_sigmoid_eps)
+        scale = self.scale(x)
 
         kpt_offset, kpt_heatmap = self.keypoint(x)
         kpt_heatmap = _in_place_clipped_sigmoid(kpt_heatmap,
                                                 self.opts.clip_sigmoid_eps)
 
+        obj_scores, obj_coords = self.coord(center)
         output = {
             Schema.HEATMAP: center,
+            # NOTE(ycho): Dense heatmap, unlike the labelled counterpart.
+            Schema.SCALE: scale,
             Schema.KEYPOINT_OFFSET: kpt_offset,
-            Schema.KEYPOINT_HEATMAP: kpt_heatmap
+            Schema.KEYPOINT_HEATMAP: kpt_heatmap,
+            Schema.CENTER_2D: obj_coords
         }
         return output
 
