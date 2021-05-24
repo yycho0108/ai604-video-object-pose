@@ -48,8 +48,10 @@ class KeypointNetwork2D(nn.Module):
         num_trainable_layers: int = 0
         returned_layers: Tuple[int, ...] = (4,)
         upsample: ConvUpsample.Settings = ConvUpsample.Settings()
-        center: HeatmapLayer2D.Settings = HeatmapLayer2D.Settings()
-        keypoint: KeypointLayer2D.Settings = KeypointLayer2D.Settings()
+        center: HeatmapLayer2D.Settings = HeatmapLayer2D.Settings(
+            hidden=(128,))
+        keypoint: KeypointLayer2D.Settings = KeypointLayer2D.Settings(
+            heatmap=HeatmapLayer2D.Settings(hidden=(128, 128)))
         coord: HeatmapCoordinatesLayer.Settings = HeatmapCoordinatesLayer.Settings()
         # NOTE(ycho): upsample_steps < 5 results in downsampling.
         upsample_steps: Tuple[int, ...] = (128, 64, 16)
@@ -79,6 +81,8 @@ class KeypointNetwork2D(nn.Module):
         self.center = HeatmapLayer2D(opts.center, c_in=c_in)
         self.scale = nn.Conv2d(c_in, 3, 3, 1, 1)
         self.keypoint = KeypointLayer2D(opts.keypoint, c_in=c_in)
+
+        # NOTE(ycho): `coord` is a parameter-free (non-trainable) layer.
         self.coord = HeatmapCoordinatesLayer(opts.coord)
 
     def forward(self, inputs):
@@ -100,23 +104,37 @@ class KeypointNetwork2D(nn.Module):
         kpt_heatmap = _in_place_clipped_sigmoid(kpt_heatmap,
                                                 self.opts.clip_sigmoid_eps)
 
-        # Compute object coordinates
-        # NOTE(ycho): `coord` is a parameter-free (non-trainable) layer.
+        # Compute object coordinates, non-max suppression + top-k pruning
         obj_scores, obj_coords = self.coord(center)
 
-        # coords.i / h * H * W + coords.j / w * W
-        # coords.i * upscale_factor * W + coords.j * upscale_factor
+        # TODO(ycho): Consider as a transform instead?
+        if True:
+            # Determine max valid coordinate bounds.
+            h, w = scale_map.shape[-2:]
+            max_bounds = th.as_tensor([h, w],
+                                      dtype=th.int32, device=center_uv.device)
 
-        # Convert `coords` to flat indices with OOB masks.
-        H, W = inputs.shape[-2:]
-        h, w = center.shape[-2:]
-        upscale_factor = H / h
+            # Lookup `scale` from `obj_coords`.
+            # TODO(ycho): Consider linear interpolation in case
+            # `obj_coords` falls to some floating-point precision boundary?
+            # For now, assume locally smooth and use the nearest neighbor
+            # instead.
+            obj_indices = th.round(obj_coord).to(dtype=th.int32)
+            flat_index = (obj_indices[..., 0] * w + obj_indices[..., 1])
 
-        I = th.round_(obj_coords[..., 0] * upscale_factor).to(dtype=th.int32)
-        J = th.round(obj_coords[..., 1]).to(dtype=th.int32)
-        cond = th.stack([I >= 0, I < H, J >= 0, J < W], dim=0)
-        mask = th.all(cond, dim=0)
-        flat_index = (I * W + J)
+            # NOTE(ycho): overwrite `invalid` index with 0.
+            # Required for `gather()` to NOT crash.
+            in_bound = th.all(th.logical_and(obj_indices >= 0,
+                                             obj_indices < max_bounds), dim=-1)
+            flat_index[~in_bound] = 0
+
+            # Format, permute, etc, etc.
+            X = scale_map.reshape(shape[:-2] + (-1,))
+            I = flat_index[:, None]
+            I = I.expand(*((-1, shape[1]) + tuple(flat_index.shape[1:])))
+
+            # NOTE(ycho): permute required for (B,3,O) -> (B,O,3)
+            scale_output = X.gather(-1, I).permute(0, 2, 1)
 
         output = {
             Schema.HEATMAP: center,
@@ -124,8 +142,11 @@ class KeypointNetwork2D(nn.Module):
             Schema.SCALE_MAP: scale_map,
             Schema.KEYPOINT_OFFSET: kpt_offset,
             Schema.KEYPOINT_HEATMAP: kpt_heatmap,
-            Schema.CENTER_2D: obj_coords
+            Schema.CENTER_2D: obj_coords,
+            # NOTE(ycho): Sparse per-object scale heatmap.
+            Schema.SCALE = scale_output
         }
+
         return output
 
 

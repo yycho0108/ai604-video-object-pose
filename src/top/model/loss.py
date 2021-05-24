@@ -105,8 +105,6 @@ class KeypointScaleLoss(nn.Module):
         # We extract the center index from the input.
         # TODO(ycho): Consider adding a data-processing `transform` instead.
         # H, W = inputs[Schema.IMAGE].shape[-2:]
-
-        # SCALE_MAP e.g. (1,3,32,32)
         h, w = output[Schema.SCALE_MAP].shape[-2:]
 
         # FIXME(ycho): `visibility` mask should ultimately account for
@@ -138,7 +136,6 @@ class KeypointScaleLoss(nn.Module):
 
         X = output[Schema.SCALE_MAP].reshape(shape[:-2] + (-1,))
         I = flat_index[:, None]
-        # TODO(ycho): Consider
         I = I.expand(*((-1, shape[1]) + tuple(flat_index.shape[1:])))
         V = visibility
 
