@@ -243,7 +243,12 @@ def top_k(scores, k: int):
 
 
 class HeatmapCoordinatesLayer:
-    """Convert dense heatmap to peak coordinates."""
+    """Convert dense heatmap to peak coordinates.
+
+    NOTE(ycho): Currently, the returned coordinates are evaluated as an
+    un-normalized floating-point grid over the image shape, ordered in (i-j)
+    order rather than (x-y) order.
+    """
 
     @dataclass
     class Settings(Serializable):

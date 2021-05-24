@@ -318,3 +318,51 @@ class BoxPoints2D:
 
         outputs[self.key_out] = v
         return outputs
+
+
+class SpatialRegressionMask:
+    """Compute spatial regression mask (= valid region)."""
+
+    def __init__(self):
+        pass
+
+    def __call__(self, inputs: Dict[Hashable, th.Tensor]):
+        # We extract the center index from the input.
+        # TODO(ycho): Consider adding a data-processing `transform` instead.
+        # H, W = inputs[Schema.IMAGE].shape[-2:]
+
+        # SCALE_MAP e.g. (1,3,32,32)
+        h, w = output[Schema.SCALE_MAP].shape[-2:]
+
+        # FIXME(ycho): `visibility` mask should ultimately account for
+        # out-of-range behavior ... (fingers crossed)
+        visibility = target[Schema.VISIBILITY].to(dtype=th.bool)[..., 0]
+        keypoints_2d_uv = target[Schema.KEYPOINT_2D]
+        center_uv = keypoints_2d_uv[..., 0, :2]
+        scale_xy = th.as_tensor(
+            [w, h], dtype=th.int32, device=center_uv.device)
+        center_xy = th.round(center_uv * scale_xy).to(dtype=th.int64)
+        # NOTE(ycho): Explicitly writing out (i,j) since the `Objectron`
+        # keypoint order is # unconventional.
+        j = center_xy[..., 0]  # (B, O)
+        i = center_xy[..., 1]  # (B, O)
+        flat_index = (i * w + j)
+
+        in_bound = th.all(th.logical_and(center_xy >= 0,
+                                         center_xy < scale_xy), dim=-1)
+        visibility = th.logical_and(visibility, in_bound)
+
+        # NOTE(ycho): Overwrite invalid(invisible) index with 0
+        # in order to prevent errors during gather().
+        # Here, we explicitly check for not only the dataset visibility,
+        # but also the validity of the resulting indexes within image bounds as
+        # well.
+        flat_index[~visibility] = 0
+
+        shape = output[Schema.SCALE_MAP].shape
+
+        X = output[Schema.SCALE_MAP].reshape(shape[:-2] + (-1,))
+        I = flat_index[:, None]
+        # TODO(ycho): Consider
+        I = I.expand(*((-1, shape[1]) + tuple(flat_index.shape[1:])))
+        V = visibility

@@ -24,7 +24,7 @@ class Saver(object):
         ckpt = th.load(path)
 
         # Load parameters from the checkpoint ...
-        self.model.load_state_dict(ckpt.pop(self.KEY_MODEL))
+        self.model.load_state_dict(ckpt.pop(self.KEY_MODEL), strict = False)
         if self.optim:
             self.optim.load_state_dict(ckpt.pop(self.KEY_OPTIM))
 

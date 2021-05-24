@@ -139,7 +139,7 @@ def main():
     path = RunPath(opts.path)
 
     # Re-parse full args with `base_opts` as default instead
-    # TODO(ycho): Verify is this works.
+    # TODO(ycho): Verify if this works.
     base_opts = update_settings(
         opts, argv=['--config_file', str(path.dir / 'opts.yaml')])
     opts = update_settings(base_opts)
@@ -220,8 +220,10 @@ def main():
             # GROUND_TRUTH
             kpt_in = data[Schema.KEYPOINT_2D][i_batch, ..., :2]
             kpt_in = kpt_in * image_scale.to(kpt_in.device)
-            print(kpt_in)  # X-Y order (J-I order)
-            print(scaled_indices[i_batch])  # Y-X order (I-J order)
+            # X-Y order (J-I order)
+            # print(kpt_in)
+            
+            # print(scaled_indices[i_batch])  # Y-X order (I-J order)
             print('scale.shape')  # 32,4,3
             print(data[Schema.SCALE].shape)
             sol = compute_pose_epnp(

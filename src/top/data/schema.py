@@ -33,6 +33,7 @@ class Schema(Enum):
     BOX_2D = "box_2d"
     INTRINSIC_MATRIX = "camera/intrinsics"
     CENTER_2D = "center_2d"
+    SCALE_MAP = "scale_map"  # dense per-element scale prediction.
 
 
 @encode.register(Schema)
