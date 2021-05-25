@@ -57,7 +57,7 @@ def create_corners(dimension, location=None, R=None):
 
 
 # FIXME(Jiyong): debug
-def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
+
     #global orientation
     R = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
 
@@ -73,6 +73,7 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
     # left top right bottom
     box_corners = [xmin, ymin, xmax, ymax]
 
+
     dx = dimension[0] / 2
     dy = dimension[1] / 2
     dz = dimension[2] / 2
@@ -84,6 +85,7 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
                 vertices.append([i*dx, j*dy, k*dz])
     
     constraints = list(itertools.permutations(vertices, 4))
+
 
     # create pre M (the term with I and the R*X)
     pre_M = np.zeros([4,4])
@@ -171,6 +173,7 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     box_3d = box_3d * np.array([w, h, 1.0])
     box_3d = box_3d.astype(int)
 
+
     # CHW -> HWC
     if isinstance(img, th.Tensor):
         img = img.detach().cpu().numpy()
@@ -204,9 +207,5 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     return img
 
 def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion, translations=None):
-    location, X = calc_location(box_2d, proj_matrix, dimension, quaternion, translations)
-    rotation = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
-
-    img = plot_3d_box(img, proj_matrix, rotation, dimension, location)
 
     return img

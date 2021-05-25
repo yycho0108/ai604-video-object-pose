@@ -46,7 +46,7 @@ class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-box')
-    train: Trainer.Settings = Trainer.Settings()
+
     # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 8
     alpha: float = 0.5
@@ -101,6 +101,7 @@ class TrainLogger:
         box_2d_sample = box_2d_sample.numpy()
 
         proj_matrix_sample = proj_matrix[0:16].reshape(4,4).cpu()
+
         proj_matrix_sample = proj_matrix_sample.numpy()
         dimensions_sample = dimensions[0].cpu()
         dimensions_sample = dimensions_sample.numpy()
@@ -240,10 +241,10 @@ def main():
         outputs[Schema.BOX_2D] = data[Schema.BOX_2D]
         outputs[Schema.INTRINSIC_MATRIX] = intrinsic_matrix
         outputs[Schema.PROJECTION] = proj_matrix
-        # outputs[Schema.SCALE] = dim
-        outputs[Schema.SCALE] = truth_dim
-        # outputs[Schema.QUATERNION] = quat
-        outputs[Schema.QUATERNION] = truth_quat
+        outputs[Schema.SCALE] = dim
+        # outputs[Schema.SCALE] = truth_dim
+        outputs[Schema.QUATERNION] = quat
+        # outputs[Schema.QUATERNION] = truth_quat
         outputs[Schema.TRANSLATION] = truth_trans
         outputs[Schema.KEYPOINT_2D] = data[Schema.KEYPOINT_2D].to(device)
 
