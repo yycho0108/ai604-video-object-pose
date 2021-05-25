@@ -4,12 +4,13 @@ Code Reference: https://github.com/skhadem/3D-BoundingBox/blob/master/
 """
 
 from enum import Enum
-from itertools import permutations
+import itertools
 import numpy as np
 import cv2
 import torch as th
 from simple_parsing.helpers.serialization.serializable import D
 from pytorch3d.transforms.rotation_conversions import quaternion_to_matrix
+from torch._C import dtype
 
 
 class cv_colors(Enum):
@@ -55,6 +56,7 @@ def create_corners(dimension, location=None, R=None):
     return final_corners
 
 
+# FIXME(Jiyong): debug
 def calc_location(box_2d, intrinsic_matrix, dimension, quaternion):
     #global orientation
     R = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
@@ -78,9 +80,9 @@ def calc_location(box_2d, intrinsic_matrix, dimension, quaternion):
     # bottom_constraints = []
 
     # using a different coord system
-    dx = dimension[2] / 2
-    dy = dimension[0] / 2
-    dz = dimension[1] / 2
+    dx = dimension[0] / 2
+    dy = dimension[1] / 2
+    dz = dimension[2] / 2
 
     vertices = []
     for i in (-1,1):
@@ -88,7 +90,7 @@ def calc_location(box_2d, intrinsic_matrix, dimension, quaternion):
             for k in (-1,1):
                 vertices.append([i*dx, j*dy, k*dz])
     
-    constraints = list(permutations(vertices, 4))
+    constraints = list(itertools.permutations(vertices, 4))
     print(len(constraints))
 
     # # left and right of object
@@ -178,9 +180,28 @@ def calc_location(box_2d, intrinsic_matrix, dimension, quaternion):
     print("lstsq error:", best_error)
     return best_loc, best_X
 
-def plot_3d_box(img, cam_to_img, rotation, dimension, center, pt):
+def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     c, h, w = img.shape
-    # # takes in a 3d point and projects it into 2d
+    # takes in a 3d point and projects it into 2d
+    vertices = list(itertools.product(*zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))  # 8x3
+    vertices = np.array(vertices)
+
+    T_box = np.zeros((4, 4))
+    T_box[:3, :3] = np.matmul(rotation, np.diag(dimension))
+    T_box[:3, -1] = center
+    T_box[3, 3] = 1
+    T = np.matmul(cam_to_img, T_box)
+    # inner product
+    box_3d = np.einsum('ab, kb -> ka', T[:3, :3], vertices) + T[None, :3, -1]
+    box_3d[..., :-1] /= box_3d[..., -1:]
+    # NDC(-1~1) -> UV(0~1) coordinates
+    box_3d[..., :-1] = 0.5 + 0.5 * box_3d[..., :-1]
+    # This flipping is technically a bug accounting for the
+    # inconsistency in the keypoint convention from the objectron dataset.
+    box_3d[..., :2] = np.flip(box_3d[..., :2], axis=(-1,))
+    box_3d = box_3d * np.array([w, h, 1.0])
+    box_3d = box_3d.astype(int)
+
     # def project_3d_pt(pt, cam_to_img):
     #     point = np.array(pt)
     #     point = np.append(point, 1)
@@ -200,15 +221,15 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center, pt):
     #     print("point:", point)
     #     box_3d.append(point)
 
-    box_3d = pt[1:]
-    box_3d = box_3d.astype(np.int16)
+    # # box_3d = pt[1:]
+    # box_3d = np.asarray(box_3d, dtype=np.int16)
 
     # TODO(Jiyong): put into loop
     print(img)
     print(img.shape)
     print(type(img))
     print(img.dtype)
-    print(box_3d)
+    print(box_3d.dtype)
     print(box_3d[0][0])
 
     # CHW -> HWC
@@ -241,7 +262,7 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center, pt):
 
     return img
 
-def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion, pt, translations=None):
+def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion, translations=None):
     location, X = calc_location(box_2d, proj_matrix, dimension, quaternion)
     rotation = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
     # # c, h, w = img.shape
@@ -250,13 +271,13 @@ def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion, pt, 
     # # img = img.reshape(h,w,c) # (h,w,c)
     # # assert img.flags['C_CONTIGUOUS'] == True
     # # img = Image.fromarray(img.astype(np.uint8))
-    # if translations is not None:
-    #     img = plot_3d_box(img, proj_matrix, rotation, dimension, translations)
+    if translations is not None:
+        location = translations
     # else:
     #     img = plot_3d_box(img, proj_matrix, rotation, dimension, location)
     # # img = np.array(img*255., dtype=np.int)
     # # img = img.transpose(2,0,1) # (c,h,w)
     # # img = img.reshape(c,h,w)
 
-    img = plot_3d_box(img, proj_matrix, rotation, dimension, location, pt)
+    img = plot_3d_box(img, proj_matrix, rotation, dimension, location)
     return img

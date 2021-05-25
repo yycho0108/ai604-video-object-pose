@@ -46,7 +46,7 @@ class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-box')
-    train: Trainer.Settings = Trainer.Settings(train_steps=1000)
+    train: Trainer.Settings = Trainer.Settings(train_steps=10000)
     # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 8
     alpha: float = 0.5
@@ -103,7 +103,7 @@ class TrainLogger:
         intrinsic_matrix_sample = intrinsic_matrix[0:9].reshape(3,3).cpu()
         intrinsic_matrix_sample = intrinsic_matrix_sample.numpy()
         proj_matrix_sample = proj_matrix[0:16].reshape(4,4).cpu()
-        proj_matrix_sample = proj_matrix_sample[0:3, :]
+        # proj_matrix_sample = proj_matrix_sample[0:3, :]
         proj_matrix_sample = proj_matrix_sample.numpy()
         dimensions_sample = dimensions[0].cpu()
         dimensions_sample = dimensions_sample.numpy()
@@ -126,7 +126,8 @@ class TrainLogger:
         keypoints_2d_sample = keypoints_2d_sample.numpy()
 
 
-        image_with_box = plot_regressed_3d_bbox(image_sample, box_2d_sample, proj_matrix_sample, dimensions_sample, quaternion_sample, keypoints_2d_sample, translations_sample)
+        # image_with_box = plot_regressed_3d_bbox(image_sample, box_2d_sample, proj_matrix_sample, dimensions_sample, quaternion_sample)
+        image_with_box = plot_regressed_3d_bbox(image_sample, box_2d_sample, proj_matrix_sample, dimensions_sample, quaternion_sample, translations_sample)
         image_with_box = th.as_tensor(image_with_box)
         self.writer.add_image('train_result_images', image_with_box, global_step=self.step)
 
@@ -248,10 +249,10 @@ def main():
         outputs[Schema.BOX_2D] = data[Schema.BOX_2D]
         outputs[Schema.INTRINSIC_MATRIX] = intrinsic_matrix
         outputs[Schema.PROJECTION] = proj_matrix
-        # outputs[Schema.SCALE] = dim
-        outputs[Schema.SCALE] = truth_dim
-        # outputs[Schema.QUATERNION] = quat
-        outputs[Schema.QUATERNION] = truth_quat
+        outputs[Schema.SCALE] = dim
+        # outputs[Schema.SCALE] = truth_dim
+        outputs[Schema.QUATERNION] = quat
+        # outputs[Schema.QUATERNION] = truth_quat
         outputs[Schema.TRANSLATION] = truth_trans
         outputs[Schema.KEYPOINT_2D] = data[Schema.KEYPOINT_2D].to(device)
 
