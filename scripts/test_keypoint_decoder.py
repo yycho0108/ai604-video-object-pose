@@ -92,12 +92,16 @@ def compute_transforms(
     # Compute PNP solution ...
     try:
         # NOTE(ycho): Only apply PnP on the points that were found.
+        points_3d_prv = points_3d
         if point_ids is not None:
             points_3d = points_3d[point_ids, ...]
         solution = efficient_pnp(points_3d[None], points_2d[None],
                                  skip_quadratic_eq=True)
     except RuntimeError as e:
         print('Encountered error during PnP : {}'.format(e))
+        print(points_3d_prv.shape)
+        print(point_ids.shape)
+        print(points_2d.shape)
         return None
 
     R, T = solution.R[0], solution.T[0]
@@ -192,12 +196,11 @@ class GroundTruthDecoder(th.nn.Module):
                     # print(K[j])
                     kpt_ids[i].append(i_kpt)
 
-            # Gather all non-trivial objects with N>0 keypoint assignments.
-            # TODO(ycho): N>4 would probably be required, now that I think
-            # about it, rather than the current criterion of N>0.
+            # Gather all non-trivial objects with N>=4 keypoint assignments.
+            # N>=4 is required for valid PnP solution (for our problem).
             out_batch = []
             for i_obj, k in enumerate(kpt_coords):
-                if not k:
+                if len(k) < 4:
                     continue
                 entry = (i_obj, kpt_coords[i_obj], kpt_ids[i_obj])
                 out_batch.append(entry)

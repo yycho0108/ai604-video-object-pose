@@ -20,6 +20,7 @@ import tqdm
 from typing import List, Dict, Tuple, Hashable, Union
 from dataclasses import dataclass
 from simple_parsing import Serializable
+import logging
 
 import torch as th
 from torchvision.transforms import Compose
@@ -603,6 +604,7 @@ def load_model():
 
 
 def main():
+    logging.captureWarnings(True)
     opts = AppSettings()
     opts = update_settings(opts)
 
