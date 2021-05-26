@@ -174,6 +174,7 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     box_3d = box_3d.astype(int)
 
 
+
     # CHW -> HWC
     if isinstance(img, th.Tensor):
         img = img.detach().cpu().numpy()
@@ -207,5 +208,6 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     return img
 
 def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion, translations=None):
+
 
     return img

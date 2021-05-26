@@ -101,7 +101,6 @@ class TrainLogger:
         box_2d_sample = box_2d_sample.numpy()
 
         proj_matrix_sample = proj_matrix[0:16].reshape(4,4).cpu()
-
         proj_matrix_sample = proj_matrix_sample.numpy()
         dimensions_sample = dimensions[0].cpu()
         dimensions_sample = dimensions_sample.numpy()
