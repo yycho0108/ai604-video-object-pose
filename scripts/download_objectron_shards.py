@@ -99,7 +99,7 @@ def main():
     opts = update_settings(opts)
     pool_states = [{} for _ in range(opts.num_workers)]
     # for train in [False, True]:
-    for train in [True]:
+    for train in [False]:
         name = 'objectron-train' if train else 'objectron-test'
         logging.info(F'Processing {name}')
 
@@ -107,7 +107,7 @@ def main():
 
         # TODO(ycho): Consider fancier (e.g. class-equalizing) shard samplers.
         shards = ObjectronDetection(
-            ObjectronDetection.Settings(), train).shards
+            ObjectronDetection.Settings(local=False), train).shards
 
         out_dir = (Path(opts.cache_dir).expanduser() / name)
         out_dir.mkdir(parents=True, exist_ok=True)

@@ -46,7 +46,7 @@ class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-box')
-    train: Trainer.Settings = Trainer.Settings(train_steps=10000)
+    train: Trainer.Settings = Trainer.Settings()
     # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 8
     alpha: float = 0.5
@@ -95,15 +95,12 @@ class TrainLogger:
             proj_matrix = outputs[Schema.PROJECTION].detach()
             keypoints_2d = outputs[Schema.KEYPOINT_2D].detach()
             
-        # image_sample = th.clip(0.5 + (input_image[0:3] * 0.25), 0.0, 1.0).cpu()
         image_sample = input_image[0:3].cpu()
         image_sample = image_sample.numpy()
         box_2d_sample = box_2d[0].cpu()
         box_2d_sample = box_2d_sample.numpy()
-        intrinsic_matrix_sample = intrinsic_matrix[0:9].reshape(3,3).cpu()
-        intrinsic_matrix_sample = intrinsic_matrix_sample.numpy()
+
         proj_matrix_sample = proj_matrix[0:16].reshape(4,4).cpu()
-        # proj_matrix_sample = proj_matrix_sample[0:3, :]
         proj_matrix_sample = proj_matrix_sample.numpy()
         dimensions_sample = dimensions[0].cpu()
         dimensions_sample = dimensions_sample.numpy()
@@ -111,20 +108,8 @@ class TrainLogger:
         quaternion_sample = quaternion_sample.numpy()
         translations_sample = translations[0].cpu()
         translations_sample = translations_sample.numpy()
-        print(input_image.shape)
-        print(image_sample.shape)
+
         self.writer.add_image('train_images', image_sample, global_step=self.step)
-        print(box_2d_sample)
-        print(intrinsic_matrix_sample)
-        print(intrinsic_matrix)
-        print(proj_matrix)
-        print(proj_matrix_sample)
-        print(dimensions_sample)
-        print(quaternion_sample)
-
-        keypoints_2d_sample = keypoints_2d[0].cpu()
-        keypoints_2d_sample = keypoints_2d_sample.numpy()
-
 
         # image_with_box = plot_regressed_3d_bbox(image_sample, box_2d_sample, proj_matrix_sample, dimensions_sample, quaternion_sample)
         image_with_box = plot_regressed_3d_bbox(image_sample, box_2d_sample, proj_matrix_sample, dimensions_sample, quaternion_sample, translations_sample)
@@ -242,6 +227,12 @@ def main():
         truth_trans = truth_trans.view(-1,3)
         proj_matrix = data[Schema.PROJECTION].to(device)
         intrinsic_matrix = data[Schema.INTRINSIC_MATRIX].to(device)
+
+        # print("gt_trans:", truth_trans)
+        # print("gt_dim:", truth_dim)
+        # print("gt_quat:", truth_quat)
+        # print("pj_mat:", proj_matrix)
+        # print("box_2d:", data[Schema.BOX_2D])
 
         dim, quat = model(image)
 
