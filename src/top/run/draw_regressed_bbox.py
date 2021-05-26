@@ -63,6 +63,8 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
 
     # format 2d corners
     # box_2d is (top, left, height, width)
+    # from uv -> NDC
+    box_2d = 2.0 * (box_2d - 0.5)
     xmin = box_2d[1]
     xmax = box_2d[3] + xmin
     ymin = box_2d[0]
@@ -82,7 +84,6 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
                 vertices.append([i*dx, j*dy, k*dz])
     
     constraints = list(itertools.permutations(vertices, 4))
-    print(len(constraints))
 
     # create pre M (the term with I and the R*X)
     pre_M = np.zeros([4,4])
@@ -169,8 +170,6 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     box_3d[..., :2] = np.flip(box_3d[..., :2], axis=(-1,))
     box_3d = box_3d * np.array([w, h, 1.0])
     box_3d = box_3d.astype(int)
-
-    print(box_3d)
 
     # CHW -> HWC
     if isinstance(img, th.Tensor):

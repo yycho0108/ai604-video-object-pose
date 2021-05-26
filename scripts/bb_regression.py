@@ -240,10 +240,10 @@ def main():
         outputs[Schema.BOX_2D] = data[Schema.BOX_2D]
         outputs[Schema.INTRINSIC_MATRIX] = intrinsic_matrix
         outputs[Schema.PROJECTION] = proj_matrix
-        outputs[Schema.SCALE] = dim
-        # outputs[Schema.SCALE] = truth_dim
-        outputs[Schema.QUATERNION] = quat
-        # outputs[Schema.QUATERNION] = truth_quat
+        # outputs[Schema.SCALE] = dim
+        outputs[Schema.SCALE] = truth_dim
+        # outputs[Schema.QUATERNION] = quat
+        outputs[Schema.QUATERNION] = truth_quat
         outputs[Schema.TRANSLATION] = truth_trans
         outputs[Schema.KEYPOINT_2D] = data[Schema.KEYPOINT_2D].to(device)
 
