@@ -123,8 +123,9 @@ class HeatmapLayer2D(nn.Module):
         layers = []
         for prv, nxt in zip(channels[:-1], channels[1:]):
             conv = nn.Conv2d(prv, nxt, kernel_size=3, padding=1, bias=True)
+            norm = nn.BatchNorm2d(nxt)
             relu = nn.ReLU(inplace=True)
-            layers.extend([conv, relu])
+            layers.extend([conv, norm, relu])
 
         # Add final unbounded output which produces logits.
         layers.append(
@@ -237,7 +238,7 @@ def top_k(scores, k: int):
     batch_size, types, h, w = scores.size()
     scores, indices = th.topk(scores.view(batch_size, types, -1), k)
     indices = indices % (h * w)
-    i = (indices / w)
+    i = (indices // w)
     j = (indices % w)
     return (scores, indices, i, j)
 

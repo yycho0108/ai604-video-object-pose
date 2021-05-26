@@ -51,7 +51,7 @@ class KeypointNetwork2D(nn.Module):
         center: HeatmapLayer2D.Settings = HeatmapLayer2D.Settings(
             hidden=(128,))
         keypoint: KeypointLayer2D.Settings = KeypointLayer2D.Settings(
-            heatmap=HeatmapLayer2D.Settings(hidden=(128, 128)))
+            heatmap=HeatmapLayer2D.Settings(hidden=(128, 128, 128, 128)))
         coord: HeatmapCoordinatesLayer.Settings = HeatmapCoordinatesLayer.Settings()
         # NOTE(ycho): upsample_steps < 5 results in downsampling.
         upsample_steps: Tuple[int, ...] = (128, 64, 16)
@@ -108,7 +108,7 @@ class KeypointNetwork2D(nn.Module):
         obj_scores, obj_coords = self.coord(center)
 
         # TODO(ycho): Consider as a transform instead?
-        if True:
+        if False:
             # Determine max valid coordinate bounds.
             h, w = scale_map.shape[-2:]
             max_bounds = th.as_tensor([h, w],
@@ -144,7 +144,7 @@ class KeypointNetwork2D(nn.Module):
             Schema.KEYPOINT_HEATMAP: kpt_heatmap,
             Schema.CENTER_2D: obj_coords,
             # NOTE(ycho): Sparse per-object scale heatmap.
-            Schema.SCALE = scale_output
+            # Schema.SCALE : scale_output
         }
 
         return output

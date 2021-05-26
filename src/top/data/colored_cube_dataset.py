@@ -288,6 +288,7 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
                 R.transpose(
                     2, 1).reshape(
                     self.opts.batch_size, 1, -1))
+            print('scale', scale.shape)
 
             # TODO(ycho): Figure out a way to unify these formats.
             # see ai604-video-object-pose#10

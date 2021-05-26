@@ -41,9 +41,12 @@ def decode(example, feature_names: List[str] = []):
     w = example['image/width'].item()
     h = example['image/height'].item()
     points = example['point_2d']
+    points_3d = example['point_3d']
     num_instances = example['instance_num'].item()
     num_keypoints = example['point_num']
+
     points = points.reshape(num_instances, NUM_KEYPOINTS, 3)
+    points_3d = points_3d.reshape(num_instances, NUM_KEYPOINTS, 3)
 
     # NOTE(ycho): Loading directly with torch to avoid warnings with PIL.
     image_bytes = example['image/encoded']
@@ -59,6 +62,7 @@ def decode(example, feature_names: List[str] = []):
     out = {
         Schema.IMAGE: th.as_tensor(image),
         Schema.KEYPOINT_2D: th.as_tensor(points),
+        Schema.KEYPOINT_3D: th.as_tensor(points_3d),
         Schema.INSTANCE_NUM: num_instances,
         Schema.TRANSLATION: th.as_tensor(translation),
         Schema.ORIENTATION: th.as_tensor(orientation),

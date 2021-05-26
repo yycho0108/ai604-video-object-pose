@@ -45,12 +45,13 @@ def main():
     dataset, _ = get_loaders(opts.dataset, device, None, xfm)
 
     for data in dataset:
-        print(data['points_2d_debug'])
-        print(data[Schema.KEYPOINT_2D])
+        # print(data['points_2d_debug'])
+        # print(data[Schema.KEYPOINT_2D])
         save_image(data[Schema.IMAGE] / 255.0, F'/tmp/img.png')
         for i, img in enumerate(data[Schema.HEATMAP]):
             save_image(img, F'/tmp/heatmap-{i}.png',
                        normalize=True)
+        save_image(data['rendered_keypoints'] / 255.0, F'/tmp/rkpts.png')
 
         break
 

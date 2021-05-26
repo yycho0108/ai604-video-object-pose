@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+#PYTHON_ARGCOMPLETE_OK
 """Example Evaluation script for Objectron dataset.
 
 It reads a tfrecord, runs evaluation, and outputs a summary report with name
@@ -16,6 +18,8 @@ import glob
 import numpy as np
 import tqdm
 from typing import List, Dict, Tuple, Hashable, Union
+from dataclasses import dataclass
+from simple_parsing import Serializable
 
 import torch as th
 from torchvision.transforms import Compose
@@ -23,12 +27,16 @@ from torchvision.transforms import Compose
 from top.data.transforms import (
     Normalize,
     InstancePadding,
+    DenseMapsMobilePose
 )
 from top.data.load import get_loaders, DatasetSettings
 from top.data.schema import Schema
 from top.run.metrics_util import (
     IoU, Box, AveragePrecision, HitMiss)
 from top.run.path_util import RunPath, get_latest_file
+from top.run.app_util import update_settings
+
+from test_keypoint_decoder import GroundTruthDecoder
 
 
 def safe_divide(i1, i2, eps: float = 1e-6):
@@ -36,7 +44,8 @@ def safe_divide(i1, i2, eps: float = 1e-6):
     return i1 / divisor
 
 
-class Settings:
+@dataclass
+class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
 
     max_pixel_error: float = 20.
@@ -44,10 +53,11 @@ class Settings:
     max_polar_error: float = 20.  # in degrees
     max_distance: float = 1.0  # In meters
     num_bins: float = 21  # ??
+
     # threshold for the visibility
     vis_thresh: float = 0.1
 
-    batch_size: int = 16
+    batch_size: int = 1  # FIXME(ycho): Restore functional `coolate_fn`.
     # Max number of samples from the test dataset to evaluate.
     max_num: int = -1
     report_file: str = '/tmp/report.txt'
@@ -63,24 +73,26 @@ class FormatLabel:
         key_3d: str = '3d_instance'
         visibility: str = 'visibility'
 
-    def __init__(self, opts: Settings):
+    def __init__(self, opts: Settings, vis_thresh: float):
         self.opts = opts
+        self.vis_thresh = vis_thresh
 
     def __call__(self, inputs: Dict[Schema,
                                     th.Tensor]) -> Dict[Schema, th.Tensor]:
         outputs = inputs.copy()
 
-        visibilities = inputs[Schema.VISIBILITY]
+        visibilities = inputs[Schema.VISIBILITY].reshape(-1)
         outputs[self.opts.visibility] = visibilities
-        visible_mask = (visibilities > self._vis_thresh)
+        visible_mask = (visibilities > self.vis_thresh)
 
         points_2d = inputs[Schema.KEYPOINT_2D]
         points_2d = (points_2d).reshape((-1, 9, 3))[..., :2]
-        outputs[key_2d] = points_2d[visible_mask]
+        outputs[self.opts.key_2d] = points_2d[visible_mask]
 
-        points_3d = inputs[Schema.KEYPOINT_3D]
-        points_3d = (points_3d).reshape((-1, 9, 3))
-        outputs[key_3d] = points_3d[visible_mask]
+        if Schema.KEYPOINT_3D in inputs:
+            points_3d = inputs[Schema.KEYPOINT_3D]
+            points_3d = (points_3d).reshape((-1, 9, 3))
+            outputs[self.opts.key_3d] = points_3d[visible_mask]
 
         return outputs
 
@@ -88,7 +100,7 @@ class FormatLabel:
 class Evaluator(object):
     """Class for evaluating the Objectron's model."""
 
-    def __init__(self, opts: Settings,
+    def __init__(self, opts: AppSettings,
                  model: th.nn.Module):
         self.opts = opts
         self.model = model
@@ -140,11 +152,17 @@ class Evaluator(object):
 
     def evaluate(self, batch: Dict[Hashable, th.Tensor]):
         """Evaluates a batch of serialized tf.Example protos."""
-        results = self.predict(batch[Schema.IMAGE],
-                               batch_size=len(batch))
+        opts = self.opts
+
+        if isinstance(self.model, GroundTruthDecoder):
+            results = self.model(batch)
+        else:
+            results = self.predict(batch[Schema.IMAGE],
+                                   batch_size=len(batch))
         # NOTE(ycho): We need results as a list of 3d boxes. Yep!
         # Since we already parsed everything, no need to be re-parse
-        labels = batch
+        labels = {k: (v.detach().cpu().numpy() if isinstance(
+            v, th.Tensor) else v) for (k, v) in batch.items()}
 
         # Creating some fake results for testing as well as example of what the
         # the results should look like.
@@ -163,9 +181,9 @@ class Evaluator(object):
         #   results.append(boxes)
 
         for i_batch, boxes in enumerate(results):
-            instances = label['2d_instance'][i_batch]
-            instances_3d = label['3d_instance'][i_batch]
-            visibilities = label['visibility'][i_batch]
+            instances = labels['2d_instance'][i_batch]
+            instances_3d = labels['3d_instance'][i_batch]
+            visibilities = labels['visibility'][i_batch]
 
             # NOTE(ycho): Counting the number of visible instances
             # throughout the entire batch.
@@ -570,24 +588,32 @@ class Evaluator(object):
 
 
 def load_model():
-    # Instantiation ...
-    device = resolve_device('cuda')
-    model = KeypointNetwork2D(opts.model).to(device)
+    if False:
+        # Instantiation ...
+        device = resolve_device('cuda')
+        model = KeypointNetwork2D(opts.model).to(device)
 
-    # Load checkpoint.
-    ckpt_file = get_latest_file('/tmp/ai604-kpt/run-031/ckpt/')
-    Saver(model, None).load(ckpt_file)
+        # Load checkpoint.
+        ckpt_file = get_latest_file('/tmp/ai604-kpt/run-031/ckpt/')
+        Saver(model, None).load(ckpt_file)
+    else:
+        return GroundTruthDecoder()
 
     return model
 
 
-def main(argv):
-    opts = Settings()
-    evaluator = Evaluator(opts)
+def main():
+    opts = AppSettings()
+    opts = update_settings(opts)
+
+    model = load_model()
+    evaluator = Evaluator(opts, model)
+
     transform = Compose([
+        DenseMapsMobilePose(DenseMapsMobilePose.Settings(), th.device('cpu')),
         Normalize(Normalize.Settings()),
+        FormatLabel(FormatLabel.Settings(), opts.vis_thresh),
         InstancePadding(InstancePadding.Settings()),
-        FormatLabel(FormatLabel.Settings())
     ])
 
     _, test_loader = get_loaders(opts.dataset,
@@ -597,7 +623,7 @@ def main(argv):
 
     # Run evaluation ...
     for i, data in enumerate(tqdm.tqdm(test_loader)):
-        evaluator.evaluate(batch)
+        evaluator.evaluate(data)
         if (opts.max_num >= 0) and (i >= opts.max_num):
             break
 
