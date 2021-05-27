@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import torch as th
+
 from torchvision.transforms import Compose, Resize
 
 from top.run.app_util import update_settings
@@ -26,22 +27,24 @@ def _to_image(x: th.Tensor):
 def main():
     opts = DatasetSettings()
     opts = update_settings(opts)
+    key_out = '__aug_img__'  # Try to prevent key collision
     transform = Compose([
         InstancePadding(InstancePadding.Settings()),
-        # PhotometricAugment(PhotometricAugment.Settings(key_out=key_out))
+        PhotometricAugment(PhotometricAugment.Settings(key_out=key_out))
     ])
     train_loader, test_loader = get_loaders(opts,
                                             device=th.device('cpu'),
                                             batch_size=4,
                                             transform=transform)
 
-    fig, ax = plt.subplots(1, 1)
+    fig, ax = plt.subplots(2, 1)
     for data in train_loader:
         image = _stack_images(data[Schema.IMAGE])
+        aug_image = _stack_images(data[key_out])
         image = _to_image(image)
-        ax.imshow(image)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        aug_image = _to_image(aug_image)
+        ax[0].imshow(image)
+        ax[1].imshow(aug_image)
         k = plt.waitforbuttonpress()
 
 

@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torchvision.utils import save_image
 
 try:
-    from pytorch3d.structures import Pointclouds
+    from pytorch3d.structures import Pointclouds, Meshes
     from pytorch3d.transforms.transform3d import Transform3d
     from pytorch3d.renderer import (
         look_at_view_transform,
@@ -23,10 +23,17 @@ try:
         PointsRasterizationSettings,
         PointsRenderer,
         PointsRasterizer,
+        RasterizationSettings,
+        MeshRasterizer,
+        PointLights,
+        MeshRenderer,
+        SoftPhongShader,
         AlphaCompositor,
+        TexturesVertex
     )
 except ImportError:
-    logging.warn('pytorch3d import has failed, colored cube dataset will be disabled.')
+    logging.warn(
+        'pytorch3d import has failed, colored cube dataset will be disabled.')
 from top.run.torch_util import resolve_device
 from top.run.app_util import update_settings
 from top.data.schema import Schema
@@ -281,6 +288,7 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
                 R.transpose(
                     2, 1).reshape(
                     self.opts.batch_size, 1, -1))
+            print('scale', scale.shape)
 
             # TODO(ycho): Figure out a way to unify these formats.
             # see ai604-video-object-pose#10
@@ -314,13 +322,13 @@ class ColoredCubeDataset(th.utils.data.IterableDataset):
 
 
 def main():
-    opts = ColoredCubeDataset.Settings(batch_size=32, unstack = False)
+    opts = ColoredCubeDataset.Settings(batch_size=32, unstack=False)
     opts = update_settings(opts)
 
     device = resolve_device()
     dataset = ColoredCubeDataset(opts, device,)
     for data in dataset:
-        print({k:v.shape for k,v in data.items()})
+        print({k: v.shape for k, v in data.items()})
         save_image(data[Schema.IMAGE] / 255.0, F'/tmp/img.png')
         break
 

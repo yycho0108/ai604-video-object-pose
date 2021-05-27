@@ -11,6 +11,7 @@ import numpy as np
 from typing import Tuple
 import itertools
 from matplotlib import pyplot as plt
+from scipy.optimize import linear_sum_assignment
 
 import torch as th
 from torchvision.transforms import Compose
@@ -94,12 +95,30 @@ def decode_kpt_heatmap(heatmap: th.Tensor,
     return scores, th.stack([i, j], axis=-1)
 
 
-def compute_pose_epnp(
-        intrinsic_matrix: th.Tensor,
-        # kpt_index:th.Tensor,
-        scale: Tuple[float, float, float],
-        points_2d: th.Tensor
-):
+def associate_keypoints_euclidean(
+        centers: th.Tensor,
+        keypoints: th.Tensor):
+    """Associate keypoints to their respective objects. Work-around in the
+    absence of offset outputs from the model (for now).
+
+    centers: [..., N, 2] Set of object centers.
+    keypoints: [..., M, 2] Set of keypoints.
+    """
+    O = centers[..., :, None, :]  # N12
+    K = keypoints[..., None, :, :]  # 1M2
+
+    # ...,NM
+    # TODO(ycho): Consider incorporating object confidences to cost matrix
+    # i.e. (O - K) * score(O) * score(K)
+    cost_matrix = th.norm(O - K, dim=-1)
+    cost_matrix = cost_matrix.detach().cpu().numpy()
+    i, j = linear_sum_assignment(cost_matrix)
+
+
+def compute_pose_epnp(intrinsic_matrix: th.Tensor,
+                      scale: Tuple[float, float, float],
+                      points_2d: th.Tensor  # ,kpt_index:th.Tensor
+                      ):
     intrinsic_matrix = intrinsic_matrix.reshape(4, 4)
     # Expected 3D bounding box vertices
     points_3d = list(itertools.product(
@@ -116,7 +135,7 @@ def compute_pose_epnp(
     points_2d -= 0.5  # [0,1] -> [-0.5, 0.5]
     points_2d *= -2.0 / intrinsic_matrix[(0, 1), (1, 0)]
 
-    # NOTE(ycho): PNP occasionally (quite often)? fails.
+    # NOTE(ycho): PNP occasionally (actually quite often)? fails.
     try:
         solution = efficient_pnp(
             points_3d.transpose(
@@ -139,7 +158,7 @@ def main():
     path = RunPath(opts.path)
 
     # Re-parse full args with `base_opts` as default instead
-    # TODO(ycho): Verify is this works.
+    # TODO(ycho): Verify if this works.
     base_opts = update_settings(
         opts, argv=['--config_file', str(path.dir / 'opts.yaml')])
     opts = update_settings(base_opts)
@@ -220,8 +239,10 @@ def main():
             # GROUND_TRUTH
             kpt_in = data[Schema.KEYPOINT_2D][i_batch, ..., :2]
             kpt_in = kpt_in * image_scale.to(kpt_in.device)
-            print(kpt_in)  # X-Y order (J-I order)
-            print(scaled_indices[i_batch])  # Y-X order (I-J order)
+            # X-Y order (J-I order)
+            # print(kpt_in)
+
+            # print(scaled_indices[i_batch])  # Y-X order (I-J order)
             print('scale.shape')  # 32,4,3
             print(data[Schema.SCALE].shape)
             sol = compute_pose_epnp(

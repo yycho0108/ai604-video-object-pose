@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Set of transforms related to visualization."""
 
-__all__ = ['DrawKeypoints', 'DrawKeypointMap']
+__all__ = ['DrawKeypoints', 'DrawKeypointMap', 'DrawBoundingBoxFromKeypoints']
 
 import itertools
 from dataclasses import dataclass
@@ -9,6 +9,7 @@ from simple_parsing import Serializable
 from typing import Union, Tuple, Dict, Hashable
 
 import numpy as np
+import cv2
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
@@ -58,7 +59,71 @@ class DrawKeypoints:
         return outputs
 
 
+class DrawBoundingBoxFromKeypoints:
+    """Draw keypoints (as inputs['points']) on an image as-is.
+
+    Mostly intended for debugging.
+    """
+
+    @dataclass
+    class Settings(Serializable):
+        kernel_size: int = 5
+        # NOTE(ycho): configurable input, in case of augmented or cropped
+        # image.
+        key_in: Schema = Schema.IMAGE
+        key_out: str = 'rendered_keypoints'  # No Schema assigned for now
+
+    def __init__(self, opts: Settings):
+        self.opts = opts
+
+    def __call__(self, inputs):
+        outputs = inputs
+        image = inputs[self.opts.key_in]
+
+        # Points in UV-coordinates
+        # consistent with the objectron format.
+        h, w = image.shape[-2:]
+        points_uv = th.as_tensor(inputs[Schema.KEYPOINT_2D])
+
+        # NOTE(ycho): The Objectron dataset flipped their convention
+        # so that the point is ordered in a minor-major axis order.
+        points = points_uv * th.as_tensor([w, h, 1.0])
+        out = th.zeros_like(inputs[self.opts.key_in])
+        num_inst = inputs[Schema.INSTANCE_NUM]
+        n = int(num_inst)
+
+        # Clone image to avoid overwriting and bring it to cpu+numpy.
+        image = image.permute(1, 2, 0).clone()
+        if isinstance(image, th.Tensor):
+            image = image.detach().cpu().numpy()
+
+        # NOTE(ycho): Ensure contiguity.
+        image = np.ascontiguousarray(image)
+
+        def _as_point(x):
+            """make point array compatible with cv2 requirements."""
+            return (int(x[0]), int(x[1]))
+
+        # Draw 3d bounding box per object.
+        for i in range(n):
+            box = points[i]
+            for j, (src, dst) in enumerate([
+                    (0, 4), (1, 5), (2, 6), (3, 7),
+                    (0, 2), (4, 6), (1, 3), (5, 7),
+                    (0, 1), (2, 3), (4, 5), (6, 7)]):
+                color = (1.0, 0.0, 0.0) if j < 4 else (0.0, 0.0, 1.0)
+                image = cv2.line(
+                    image, _as_point(
+                        box[src + 1]), _as_point(
+                        box[dst + 1]), color, 1)
+        image = th.as_tensor(image.transpose(2, 0, 1))
+
+        outputs[self.opts.key_out] = image
+        return outputs
+
+
 class DrawKeypointMap:
+    """Render a colorized version of the keypoint heatmap."""
 
     @dataclass
     class Settings(Serializable):

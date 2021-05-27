@@ -101,6 +101,10 @@ class InstancePadding:
 
             # Format slice object and copy input.
             s = [slice(None, None, None) for _ in range(len(shape))]
-            s[idim] = slice(None, shape[idim], None)
-            outputs[k][s] = inputs[k][s]
+            # FIXME(ycho): BAD workaround for dealing with num_inst >
+            # max_num_inst for now.
+            num_inst = min(shape[idim], self.opts.max_num_inst)
+            s[idim] = slice(None, num_inst, None)
+            outputs[k][s] = th.as_tensor(inputs[k][s])
+
         return outputs

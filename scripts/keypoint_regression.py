@@ -20,7 +20,9 @@ from top.train.event.topics import Topic
 from top.train.event.helpers import (Collect, Periodic, Evaluator)
 
 from top.model.keypoint import KeypointNetwork2D
-from top.model.loss import ObjectHeatmapLoss, KeypointDisplacementLoss
+from top.model.loss import (
+    ObjectHeatmapLoss, KeypointDisplacementLoss,
+    KeypointScaleLoss)
 
 from top.data.transforms.augment import PhotometricAugment
 from top.data.transforms import (
@@ -87,6 +89,14 @@ class TrainLogger:
             DrawKeypointMap.Settings(
                 as_displacement=False))
 
+    def _on_losses(self, losses: Dict[str, th.Tensor]):
+        """Log individual training losses."""
+        for k, v in losses.items():
+            name = k
+            loss = v.detach().cpu()
+            self.writer.add_scalar(name, loss,
+                                   global_step=self.step)
+
     def _on_loss(self, loss):
         """log training loss."""
         loss = loss.detach().cpu()
@@ -114,8 +124,9 @@ class TrainLogger:
             target_kpt_map = self.draw_kpt_map(
                 inputs[Schema.KEYPOINT_HEATMAP][0]).detach()
 
-        # NOTE(ycho): denormalize input image.
-        image = th.clip(0.5 + (input_image[0] * 0.25), 0.0, 1.0)
+            # NOTE(ycho): denormalize input image.
+            image = th.clip(0.5 + (input_image[0] * 0.25), 0.0, 1.0)
+
         self.writer.add_image(
             'train_images',
             image.cpu(),
@@ -144,6 +155,8 @@ class TrainLogger:
         # NOTE(ycho): Log loss only periodically.
         self.hub.subscribe(Topic.TRAIN_LOSS,
                            Periodic(self.period, self._on_loss))
+        self.hub.subscribe(Topic.TRAIN_LOSSES,
+                           Periodic(self.period, self._on_losses))
         self.hub.subscribe(Topic.TRAIN_OUT,
                            Periodic(self.period, self._on_train_out))
 
@@ -275,7 +288,8 @@ def main():
         Schema.HEATMAP: ObjectHeatmapLoss(key=Schema.HEATMAP),
         # Schema.DISPLACEMENT_MAP: KeypointDisplacementLoss(),
         Schema.KEYPOINT_HEATMAP: ObjectHeatmapLoss(
-            key=Schema.KEYPOINT_HEATMAP)
+            key=Schema.KEYPOINT_HEATMAP),
+        Schema.SCALE: KeypointScaleLoss()
     }
 
     def _loss_fn(model: th.nn.Module, data):
@@ -291,7 +305,13 @@ def main():
                     outputs=outputs)
         kpt_heatmap_loss = losses[Schema.KEYPOINT_HEATMAP](outputs, data)
         heatmap_loss = losses[Schema.HEATMAP](outputs, data)
-        return (kpt_heatmap_loss + heatmap_loss)
+        scale_loss = losses[Schema.SCALE](outputs, data)
+        # Independently log stuff
+        hub.publish(Topic.TRAIN_LOSSES, {
+            'keypoint': kpt_heatmap_loss,
+            'center': heatmap_loss,
+            'scale': scale_loss})
+        return (kpt_heatmap_loss + heatmap_loss + scale_loss)
 
     ## Load from checkpoint
     if opts.load_ckpt:

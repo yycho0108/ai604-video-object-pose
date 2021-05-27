@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from simple_parsing import Serializable
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Hashable
 
 import torch as th
 import torch.nn as nn
@@ -10,6 +10,8 @@ import torch.nn.functional as F
 from kornia.geometry.subpix.dsnt import (
     spatial_expectation2d, spatial_softmax2d
 )
+
+from top.data.schema import Schema
 
 
 class ConvUpsample(nn.Module):
@@ -121,8 +123,9 @@ class HeatmapLayer2D(nn.Module):
         layers = []
         for prv, nxt in zip(channels[:-1], channels[1:]):
             conv = nn.Conv2d(prv, nxt, kernel_size=3, padding=1, bias=True)
+            norm = nn.BatchNorm2d(nxt)
             relu = nn.ReLU(inplace=True)
-            layers.extend([conv, relu])
+            layers.extend([conv, norm, relu])
 
         # Add final unbounded output which produces logits.
         layers.append(
@@ -220,3 +223,46 @@ class DsntLayer2D(nn.Module):
         prob = spatial_softmax2d(inputs, temperature=self.temperature)
         kpts = spatial_expectation2d(prob, normalized_coordinates=True)
         return (prob, kpts)
+
+
+def spatial_nms(x, kernel_size: int):
+    # Alternatively, kernel_size ~ 3 * sigma
+    pad = (kernel_size - 1) // 2
+    local_max = th.nn.functional.max_pool2d(
+        x, (kernel_size, kernel_size), stride=1, padding=pad)
+    peak_mask = (local_max == x).float()
+    return x * peak_mask
+
+
+def top_k(scores, k: int):
+    batch_size, types, h, w = scores.size()
+    scores, indices = th.topk(scores.view(batch_size, types, -1), k)
+    indices = indices % (h * w)
+    i = (indices // w)
+    j = (indices % w)
+    return (scores, indices, i, j)
+
+
+class HeatmapCoordinatesLayer:
+    """Convert dense heatmap to peak coordinates.
+
+    NOTE(ycho): Currently, the returned coordinates are evaluated as an
+    un-normalized floating-point grid over the image shape, ordered in (i-j)
+    order rather than (x-y) order.
+    """
+
+    @dataclass
+    class Settings(Serializable):
+        nms_kernel_size: int = 9
+        max_num_instance: int = 8
+
+    def __init__(self, opts: Settings):
+        self.opts = opts
+
+    def __call__(self, inputs: th.Tensor):
+        heatmap = inputs
+        batch, cat, height, width = heatmap.shape
+        num_points = heatmap.shape[1]
+        heatmap = spatial_nms(heatmap, self.opts.nms_kernel_size)
+        scores, inds, i, j = top_k(heatmap, k=self.opts.max_num_instance)
+        return scores, th.stack([i, j], axis=-1)
