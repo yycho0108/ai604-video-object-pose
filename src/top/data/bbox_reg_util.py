@@ -128,6 +128,9 @@ class CropObject(object):
 
         keypoint_2d_min = th.min(keypoints_2d_clamp, dim=1).values
         keypoint_2d_max = th.max(keypoints_2d_clamp, dim=1).values
+        # For calculate translations using 2D constraints
+        keypoint_2d_min_uv = keypoint_2d_min / th.as_tensor([w, h, 1.0])
+        keypoint_2d_max_uv = keypoint_2d_max / th.as_tensor([w, h, 1.0])
         
         visible_crop_img = []
         visible_point_2d = []
@@ -140,11 +143,17 @@ class CropObject(object):
             # NOTE(Jiyion): If visiblity is false, cropping that object is impossible
             if not visibility[obj]:
                 continue
+            
 
             top = int(keypoint_2d_min[obj][1])
             left = int(keypoint_2d_min[obj][0])
             height = int(keypoint_2d_max[obj][1]) - int(keypoint_2d_min[obj][1])
             width = int(keypoint_2d_max[obj][0]) - int(keypoint_2d_min[obj][0])
+            # For calculate translations using 2D constraints
+            top_uv = keypoint_2d_min_uv[obj][1]
+            left_uv = keypoint_2d_min_uv[obj][0]
+            height_uv = keypoint_2d_max_uv[obj][1] - keypoint_2d_min_uv[obj][1]
+            width_uv = keypoint_2d_max_uv[obj][0] - keypoint_2d_min_uv[obj][0]
 
             # Occasionally we get an empty ROI due to floating-point precision
             if width<=0 or height<=0:
@@ -156,7 +165,7 @@ class CropObject(object):
             visible_trans.append(translation[obj])
             visible_quat.append(quaternions[obj])
             visible_scale.append(scale[obj])
-            visible_box_2d.append(th.as_tensor([top, left, height, width]))
+            visible_box_2d.append(th.as_tensor([top_uv, left_uv, height_uv, width_uv]))
         
         # shallow copy
         outputs = inputs.copy()
