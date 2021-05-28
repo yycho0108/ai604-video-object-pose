@@ -16,6 +16,10 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
     ymax = (box_2d[2] + ymin)
 
     # left top right bottom
+<<<<<<< HEAD
+=======
+    box_corners = [xmin, ymin, xmax, ymax]
+>>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     dx = dimension[0] / 2
     dy = dimension[1] / 2
@@ -26,7 +30,13 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
         for j in (-1,1):
             for k in (-1,1):
                 vertices.append([i*dx, j*dy, k*dz])
+<<<<<<< HEAD
 
+=======
+    
+    constraints = list(itertools.permutations(vertices, 4))
+    print(len(constraints))
+>>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     # create pre M (the term with I and the R*X)
     pre_M = np.zeros([4,4])
@@ -95,12 +105,21 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
 
 
 if __name__ == '__main__':
+<<<<<<< HEAD
 
+=======
+    box_2d = np.array([0.0273, 0.0623, 0.6438, 0.9307])
+>>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
     proj_matrix = np.array([1.6358e+00,  0.0000e+00,  1.9637e-02,  0.0000e+00,  
                             0.0000e+00,  2.1811e+00, -3.0700e-03,  0.0000e+00,  
                             0.0000e+00,  0.0000e+00, -1.0000e+00, -1.0000e-03,  
                             0.0000e+00,  0.0000e+00, -1.0000e+00,  0.0000e+00]).reshape(4,4)
+<<<<<<< HEAD
 
+=======
+    dimension = np.array([ 0.1499, -0.4744,  0.7188,  0.4857])
+    quaternion = np.array([0.5547,  0.4986, -0.3726,  0.5521])
+>>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
     translations = np.array([-0.3957,  0.0739, -1.8345])
 
     location, X = calc_location(box_2d, proj_matrix, dimension, quaternion, translations)

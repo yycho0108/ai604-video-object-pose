@@ -22,13 +22,52 @@ class cv_colors(Enum):
     MINT = (239,255,66)
     YELLOW = (2,255,250)
 
+<<<<<<< HEAD
 
+=======
+def get_cube_points() -> th.Tensor:
+    """ Get cube points, sorted in descending order by axes and coordinates. """
+    points_3d = list(itertools.product(
+        *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))
+#     points_3d = np.insert(points_3d, 0, [0, 0, 0], axis=0)
+    points_3d = th.as_tensor(points_3d, dtype=th.float32).reshape(-1, 3)
+    return points_3d
+
+def calc_location(box_2d, proj_matrix, dimension, quaternion, translations):
+>>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
     #global orientation
     R = (quaternion_to_matrix(th.as_tensor(quaternion))
          .detach().cpu().numpy())
 
     # format 2d corners
+<<<<<<< HEAD
 
+=======
+#     xmin, ymin, xmax, ymax = box_2d
+
+    # left top right bottom
+#     box_corners = [xmin, ymin, xmax, ymax]
+    box_corners = box_2d
+    
+    T_box = np.zeros((4, 4), dtype=np.float32)
+    T_box[..., :3, :3] = np.matmul(R, np.diag(dimension))
+    T_box[..., :3, -1] = translations
+    T_box[..., 3, 3] = 1
+    T_p = proj_matrix.reshape(4, 4)
+    T = np.matmul(T_p, T_box)
+    T = np.array(T)
+    
+    v3 = np.einsum('...ab, kb -> ...ka',
+                      T[..., :3, :3], get_cube_points()) + T[..., None, :3, -1]
+    v2 = v3[...,:2] / v3[...,2:]
+    
+    imin = np.argmin(v2, 0)
+    imax = np.argmax(v2, 0)
+    indices = [imin[0], imin[1], imax[0], imax[1]]
+    vertices = get_cube_points() * dimension
+    constraints = [vertices[indices]]
+#     constraints = list(itertools.permutations(vertices, 4))
+>>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     best_loc = None
     best_error = [np.inf]
@@ -88,7 +127,10 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     box_3d[..., :2] = np.flip(box_3d[..., :2], axis=(-1,))
     box_3d = box_3d * np.array([w, h, 1.0])
     box_3d = box_3d.astype(int)
+<<<<<<< HEAD
 
+=======
+>>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     # CHW -> HWC
     if isinstance(img, th.Tensor):
@@ -122,6 +164,32 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
 
     return img
 
+<<<<<<< HEAD
 
+=======
+def plot_regressed_3d_bbox(img, points_2d, proj_matrix, dimension, quaternion, translations):
+    # TODO(Jiyong): make with batch
+    img = img[0]
+    points_2d = points_2d[0]
+    proj_matrix = proj_matrix[0]
+    dimension = dimension[0]
+    quaternion = quaternion[0]
+    translations = translations[0]
+
+    points = points_2d[..., 1:, :2]
+    # Restore conventions
+    points = th.flip(points, dims=(-1,)) # XY->IJ
+    points = 2.0 * (points - 0.5) # (0,1) -> (-1, +1)
+
+    pmin = points.min(dim = -2).values.reshape(-1)
+    pmax = points.max(dim = -2).values.reshape(-1)
+    box_2d = th.cat([pmin,pmax])
+
+    location, X = calc_location(box_2d, proj_matrix, dimension, quaternion, translations)
+    rotation = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
+
+    img = plot_3d_box(img, proj_matrix, rotation, dimension, location)
+    img = th.as_tensor(img)
+>>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     return img
