@@ -77,7 +77,7 @@ class Trainer(object):
 
                 # Backprop + Optimize ...
                 self.optim.zero_grad()
-                loss.backward()
+                loss["total"].backward()
                 self.optim.step()
 
                 # Emit `step` event.

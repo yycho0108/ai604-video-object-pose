@@ -95,15 +95,6 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
 
 
 if __name__ == '__main__':
-    # box_2d: tensor([[0.0273, 0.0623, 0.6438, 0.9307]])
-    # gt_trans: tensor([[-0.3957,  0.0739, -1.8345]], device='cuda:0')
-    # gt_dim: tensor([[0.5555, 0.8413, 1.2966]], device='cuda:0')
-    # gt_quat: tensor([[ 0.1499, -0.4744,  0.7188,  0.4857]], device='cuda:0')
-    # pj_mat: tensor([ 1.6358e+00,  0.0000e+00,  1.9637e-02,  0.0000e+00,  0.0000e+00,
-    #          2.1811e+00, -3.0700e-03,  0.0000e+00,  0.0000e+00,  0.0000e+00,
-    #         -1.0000e+00, -1.0000e-03,  0.0000e+00,  0.0000e+00, -1.0000e+00,
-    #          0.0000e+00], device='cuda:0')
-
 
     proj_matrix = np.array([1.6358e+00,  0.0000e+00,  1.9637e-02,  0.0000e+00,  
                             0.0000e+00,  2.1811e+00, -3.0700e-03,  0.0000e+00,  

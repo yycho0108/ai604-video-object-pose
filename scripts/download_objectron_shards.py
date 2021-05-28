@@ -99,7 +99,7 @@ def main():
     opts = update_settings(opts)
     pool_states = [{} for _ in range(opts.num_workers)]
     # for train in [False, True]:
-    for train in [False]:
+    for train in [False, True]:
         name = 'objectron-train' if train else 'objectron-test'
         logging.info(F'Processing {name}')
 
