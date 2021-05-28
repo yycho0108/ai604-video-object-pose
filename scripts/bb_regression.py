@@ -73,10 +73,14 @@ class TrainLogger:
 
     def _on_loss(self, loss):
         """log training loss."""
-        loss = loss.detach().cpu()
+        loss_total = loss["total"].detach().cpu()
+        loss_scale = loss["scale"].detach().cpu()
+        loss_orient = loss["orientation"].detach().cpu()
 
         # Update tensorboard ...
-        self.writer.add_scalar('train_loss', loss, global_step=self.step)
+        self.writer.add_scalar('train_loss_total', loss["total"], global_step=self.step)
+        self.writer.add_scalar('train_loss_scale', loss["scale"], global_step=self.step)
+        self.writer.add_scalar('train_loss_orientation', loss["orientation"], global_step=self.step)
 
         # update tqdm logger bar.
         self.tqdm.set_postfix(loss=loss)
@@ -86,35 +90,19 @@ class TrainLogger:
         """log tranining outputs."""
         # Fetch inputs ...
         with th.no_grad():
-            input_image = inputs[Schema.IMAGE].detach()
-            box_2d = outputs[Schema.BOX_2D]
-            intrinsic_matrix = outputs[Schema.INTRINSIC_MATRIX]
-            dimensions = outputs[Schema.SCALE].detach()
-            quaternion = outputs[Schema.QUATERNION].detach()
-            translations = outputs[Schema.TRANSLATION].detach()
-            proj_matrix = outputs[Schema.PROJECTION].detach()
-            keypoints_2d = outputs[Schema.KEYPOINT_2D].detach()
-            
-        image_sample = input_image[0:3].cpu()
-        image_sample = image_sample.numpy()
-        box_2d_sample = box_2d[0].cpu()
-        box_2d_sample = box_2d_sample.numpy()
+            input_image = inputs[Schema.IMAGE].detach().cpu()
+            proj_matrix = inputs[Schema.PROJECTION].detach().cpu()
+            keypoints_2d = inputs[Schema.KEYPOINT_2D].detach().cpu()
+            translations = inputs[Schema.TRANSLATION].detach().cpu()
 
-        proj_matrix_sample = proj_matrix[0:16].reshape(4,4).cpu()
-        proj_matrix_sample = proj_matrix_sample.numpy()
-        dimensions_sample = dimensions[0].cpu()
-        dimensions_sample = dimensions_sample.numpy()
-        quaternion_sample = quaternion[0].cpu()
-        quaternion_sample = quaternion_sample.numpy()
-        translations_sample = translations[0].cpu()
-        translations_sample = translations_sample.numpy()
+            dimensions = outputs[Schema.SCALE].detach().cpu()
+            quaternion = outputs[Schema.QUATERNION].detach().cpu()
 
-        self.writer.add_image('train_images', image_sample, global_step=self.step)
+        self.writer.add_image('train_images', input_image[0].cpu(), global_step=self.step)
 
-        # image_with_box = plot_regressed_3d_bbox(image_sample, box_2d_sample, proj_matrix_sample, dimensions_sample, quaternion_sample)
-        image_with_box = plot_regressed_3d_bbox(image_sample, box_2d_sample, proj_matrix_sample, dimensions_sample, quaternion_sample, translations_sample)
-        image_with_box = th.as_tensor(image_with_box)
-        self.writer.add_image('train_result_images', image_with_box, global_step=self.step)
+        image_with_box = plot_regressed_3d_bbox(input_image, keypoints_2d, proj_matrix, dimensions, quaternion, translations)
+        
+        self.writer.add_image('train_result_images', image_with_box[0:3], global_step=self.step)
 
     def _on_step(self, step):
         """save current step"""
@@ -225,27 +213,12 @@ def main():
         truth_dim = truth_dim.view(-1,3)
         truth_trans = data[Schema.TRANSLATION].to(device)
         truth_trans = truth_trans.view(-1,3)
-        proj_matrix = data[Schema.PROJECTION].to(device)
-        intrinsic_matrix = data[Schema.INTRINSIC_MATRIX].to(device)
-
-        # print("gt_trans:", truth_trans)
-        # print("gt_dim:", truth_dim)
-        # print("gt_quat:", truth_quat)
-        # print("pj_mat:", proj_matrix)
-        # print("box_2d:", data[Schema.BOX_2D])
 
         dim, quat = model(image)
 
         outputs = {}
-        outputs[Schema.BOX_2D] = data[Schema.BOX_2D]
-        outputs[Schema.INTRINSIC_MATRIX] = intrinsic_matrix
-        outputs[Schema.PROJECTION] = proj_matrix
         outputs[Schema.SCALE] = dim
-        # outputs[Schema.SCALE] = truth_dim
         outputs[Schema.QUATERNION] = quat
-        # outputs[Schema.QUATERNION] = truth_quat
-        outputs[Schema.TRANSLATION] = truth_trans
-        outputs[Schema.KEYPOINT_2D] = data[Schema.KEYPOINT_2D].to(device)
 
         # Also make input/output pair from training
         # iterations available to the event bus.
@@ -253,9 +226,15 @@ def main():
                     inputs = data,
                     outputs = outputs)
 
+        loss = {}
+
         scale_loss = scale_loss_func(dim, truth_dim)
         orient_loss = orientation_loss_func(quat, truth_quat)
-        loss = opts.alpha * scale_loss + orient_loss
+        total_loss = opts.alpha * scale_loss + orient_loss
+
+        loss["total"] = total_loss
+        loss["scale"] = scale_loss
+        loss["orientation"] = orient_loss
 
         return loss
 

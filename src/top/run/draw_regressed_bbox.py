@@ -22,73 +22,44 @@ class cv_colors(Enum):
     MINT = (239,255,66)
     YELLOW = (2,255,250)
 
-def create_corners(dimension, location=None, R=None):
-    dx = dimension[0] / 2
-    dy = dimension[1] / 2
-    dz = dimension[2] / 2
+def get_cube_points() -> th.Tensor:
+    """ Get cube points, sorted in descending order by axes and coordinates. """
+    points_3d = list(itertools.product(
+        *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))
+#     points_3d = np.insert(points_3d, 0, [0, 0, 0], axis=0)
+    points_3d = th.as_tensor(points_3d, dtype=th.float32).reshape(-1, 3)
+    return points_3d
 
-    x_corners = []
-    y_corners = []
-    z_corners = []
-
-    for i in [-1, 1]:
-        for j in [-1, 1]:
-            for k in [-1, 1]:
-                x_corners.append(dx*i)
-                y_corners.append(dy*j)
-                z_corners.append(dz*k)
-
-    corners = [x_corners, y_corners, z_corners]
-
-    # rotate if R is passed in
-    if R is not None:
-        corners = np.dot(R, corners)
-
-    # shift if location is passed in
-    if location is not None:
-        for i,loc in enumerate(location):
-            corners[i,:] = corners[i,:] + loc
-
-    final_corners = []
-    for i in range(8):
-        final_corners.append([corners[0][i], corners[1][i], corners[2][i]])
-
-    return final_corners
-
-
-# FIXME(Jiyong): debug
-def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
+def calc_location(box_2d, proj_matrix, dimension, quaternion, translations):
     #global orientation
-    R = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
+    R = (quaternion_to_matrix(th.as_tensor(quaternion))
+         .detach().cpu().numpy())
 
     # format 2d corners
-    # box_2d is (top, left, height, width)
-    xmin = box_2d[1]
-    xmax = box_2d[3] + xmin
-    ymin = box_2d[0]
-    ymax = box_2d[2] + ymin
+#     xmin, ymin, xmax, ymax = box_2d
 
     # left top right bottom
-    box_corners = [xmin, ymin, xmax, ymax]
-
-    dx = dimension[0] / 2
-    dy = dimension[1] / 2
-    dz = dimension[2] / 2
-
-    vertices = []
-    for i in (-1,1):
-        for j in (-1,1):
-            for k in (-1,1):
-                vertices.append([i*dx, j*dy, k*dz])
+#     box_corners = [xmin, ymin, xmax, ymax]
+    box_corners = box_2d
     
-    constraints = list(itertools.permutations(vertices, 4))
-    print(len(constraints))
-
-    # create pre M (the term with I and the R*X)
-    pre_M = np.zeros([4,4])
-    # 1's down diagonal
-    for i in range(0,4):
-        pre_M[i][i] = 1
+    T_box = np.zeros((4, 4), dtype=np.float32)
+    T_box[..., :3, :3] = np.matmul(R, np.diag(dimension))
+    T_box[..., :3, -1] = translations
+    T_box[..., 3, 3] = 1
+    T_p = proj_matrix.reshape(4, 4)
+    T = np.matmul(T_p, T_box)
+    T = np.array(T)
+    
+    v3 = np.einsum('...ab, kb -> ...ka',
+                      T[..., :3, :3], get_cube_points()) + T[..., None, :3, -1]
+    v2 = v3[...,:2] / v3[...,2:]
+    
+    imin = np.argmin(v2, 0)
+    imax = np.argmax(v2, 0)
+    indices = [imin[0], imin[1], imax[0], imax[1]]
+    vertices = get_cube_points() * dimension
+    constraints = [vertices[indices]]
+#     constraints = list(itertools.permutations(vertices, 4))
 
     best_loc = None
     best_error = [np.inf]
@@ -96,52 +67,29 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
 
     # loop through each possible constraint, hold on to the best guess
     count = 0
-    for constraint in constraints:
-        # each corner
-        Xa = constraint[0]
-        Xb = constraint[1]
-        Xc = constraint[2]
-        Xd = constraint[3]
-
-        X_array = [Xa, Xb, Xc, Xd]
-
-        # M: all 1's down diagonal, and upper 3x1 is Rotation_matrix * [x, y, z]
-        Ma = np.copy(pre_M)
-        Mb = np.copy(pre_M)
-        Mc = np.copy(pre_M)
-        Md = np.copy(pre_M)
-
-        M_array = [Ma, Mb, Mc, Md]
-
+    bs = np.inf
+    K = proj_matrix
+    for XX in constraints:        
         # create A, b
-        A = np.zeros([4,3], dtype=np.float)
-        b = np.zeros([4,1])
+        A = np.zeros([4,3], dtype=np.float32)
+        b = np.zeros([4,1], dtype=np.float32)
+        for row, a in enumerate([0,1,0,1]):
+            v = box_corners[row]
+            A[row, :] = v * K[2, :3] - K[a, :3]
+            b[row, :] = (-v * np.einsum('a,b,ba->', XX[row], K[2, :3], R)
+                       + np.einsum('a,b,ba->', XX[row], K[a, :3], R))
 
-        indicies = [0,1,0,1]
-        for row, index in enumerate(indicies):
-            X = X_array[row]
-            M = M_array[row]
-
-            # create M for corner Xx
-            RX = np.dot(R, X)
-            M[:3,3] = RX.reshape(3)
-
-            K = proj_matrix[:3, :]
-            M = np.dot(K, M)
-
-            # ref: http://ywpkwon.github.io/pdf/bbox3d-study.pdf
-            A[row, :] = M[index,:3] - box_corners[row] * M[2,:3]
-            b[row] = box_corners[row] * M[2,3] - M[index,3]
 
         # solve here with least squares, since over fit will get some error
+#         print('A', A,  'b', b)
         loc, error, rank, s = np.linalg.lstsq(A, b, rcond=None)
-
+        
         # found a better estimation
         if error < best_error:
             count += 1 # for debugging
             best_loc = loc
             best_error = error
-            best_X = X_array
+            best_X = XX
 
     # return best_loc, [left_constraints, right_constraints] # for debugging
     best_loc = [best_loc[0][0], best_loc[1][0], best_loc[2][0]]
@@ -159,6 +107,8 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     T_box[:3, -1] = center
     T_box[3, 3] = 1
     T = np.matmul(cam_to_img, T_box)
+    T = np.array(T)
+
     # inner product
     box_3d = np.einsum('ab, kb -> ka', T[:3, :3], vertices) + T[None, :3, -1]
     box_3d[..., :-1] /= box_3d[..., -1:]
@@ -169,8 +119,6 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     box_3d[..., :2] = np.flip(box_3d[..., :2], axis=(-1,))
     box_3d = box_3d * np.array([w, h, 1.0])
     box_3d = box_3d.astype(int)
-
-    print(box_3d)
 
     # CHW -> HWC
     if isinstance(img, th.Tensor):
@@ -204,10 +152,28 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
 
     return img
 
-def plot_regressed_3d_bbox(img, box_2d, proj_matrix, dimension, quaternion, translations=None):
+def plot_regressed_3d_bbox(img, points_2d, proj_matrix, dimension, quaternion, translations):
+    # TODO(Jiyong): make with batch
+    img = img[0]
+    points_2d = points_2d[0]
+    proj_matrix = proj_matrix[0]
+    dimension = dimension[0]
+    quaternion = quaternion[0]
+    translations = translations[0]
+
+    points = points_2d[..., 1:, :2]
+    # Restore conventions
+    points = th.flip(points, dims=(-1,)) # XY->IJ
+    points = 2.0 * (points - 0.5) # (0,1) -> (-1, +1)
+
+    pmin = points.min(dim = -2).values.reshape(-1)
+    pmax = points.max(dim = -2).values.reshape(-1)
+    box_2d = th.cat([pmin,pmax])
+
     location, X = calc_location(box_2d, proj_matrix, dimension, quaternion, translations)
     rotation = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
 
     img = plot_3d_box(img, proj_matrix, rotation, dimension, location)
+    img = th.as_tensor(img)
 
     return img

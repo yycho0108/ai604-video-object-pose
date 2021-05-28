@@ -97,6 +97,7 @@ class CropObject(object):
     def __call__(self, inputs: dict):
         # Parse inputs
         image = inputs[Schema.IMAGE]
+        proj_matrix = inputs[Schema.PROJECTION]
         num_object = inputs[Schema.INSTANCE_NUM]
         translation = inputs[Schema.TRANSLATION]
         orientation = inputs[Schema.ORIENTATION]
@@ -105,16 +106,17 @@ class CropObject(object):
 
         c, h, w = image.shape[:]
         keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]
-
+        num_vertices = keypoints_2d_uv.shape[-2]
+        keypoints_2d_uv = keypoints_2d_uv.reshape(-1, num_vertices, 3)
         
         keypoints_2d = th.as_tensor(keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
-        num_vertices = keypoints_2d.shape[-2]
-        keypoints_2d = keypoints_2d.reshape(-1,num_vertices,3)
 
         # clamp for the case that keypoints is in out of image
         keypoints_2d_clamp = th.clamp(th.as_tensor(keypoints_2d_uv), min=0, max=1)
         keypoints_2d_clamp = th.as_tensor(keypoints_2d_clamp) * th.as_tensor([w, h, 1.0])
         keypoints_2d_clamp = keypoints_2d_clamp.reshape(-1,num_vertices,3)
+
+        proj_matrix = proj_matrix.reshape(-1,4,4)
 
         orientation = th.as_tensor(orientation)
         orientation = orientation.reshape(-1,3,3)
@@ -129,6 +131,8 @@ class CropObject(object):
         keypoint_2d_min = th.min(keypoints_2d_clamp, dim=1).values
         keypoint_2d_max = th.max(keypoints_2d_clamp, dim=1).values
         
+        orignal_imgs = []
+        proj_matrices = []
         visible_crop_img = []
         visible_point_2d = []
         visible_trans = []
@@ -151,8 +155,12 @@ class CropObject(object):
                 continue
             crop_tmp = resized_crop(image, top, left, height, width, size=self.opts.crop_img_size)
 
+            # copy for padding
+            orignal_imgs.append(image)
+            proj_matrices.append(proj_matrix)
+
             visible_crop_img.append(crop_tmp)
-            visible_point_2d.append(keypoints_2d[obj])
+            visible_point_2d.append(keypoints_2d_uv[obj])
             visible_trans.append(translation[obj])
             visible_quat.append(quaternions[obj])
             visible_scale.append(scale[obj])
@@ -163,6 +171,8 @@ class CropObject(object):
         # case that all objects in image are not visible
         # TODO(Jiyong): If all objects in batch are not visible, how to handle?
         if all(vis == 0 for vis in visibility):
+            outputs[Schema.IMAGE] = th.tensor(orignal_imgs).reshape(-1, c, h, w)
+            outputs[Schema.PROJECTION] = th.tensor(proj_matrices).reshape(-1, 4, 4)
             outputs[Schema.CROPPED_IMAGE] = th.tensor(visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
             outputs[Schema.KEYPOINT_2D] = th.tensor(visible_point_2d).reshape(-1, num_vertices, 3)
             outputs[Schema.TRANSLATION] = th.tensor(visible_trans).reshape(-1, 3)
@@ -172,6 +182,8 @@ class CropObject(object):
 
             return outputs
         
+        outputs[Schema.IMAGE] = th.stack(orignal_imgs).reshape(-1, c, h, w)
+        outputs[Schema.PROJECTION] = th.stack(proj_matrices).reshape(-1, 4, 4)
         outputs[Schema.CROPPED_IMAGE] = th.stack(visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
         outputs[Schema.KEYPOINT_2D] = th.stack(visible_point_2d).reshape(-1, num_vertices, 3)
         outputs[Schema.TRANSLATION] = th.stack(visible_trans).reshape(-1, 3)
