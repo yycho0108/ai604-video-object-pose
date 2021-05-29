@@ -142,13 +142,13 @@ class CropObject(object):
         visible_quat = []
         visible_scale = []
         visible_box_2d = []
+        instance_index = []
         
         for obj in range(num_object):
             # NOTE(Jiyion): If visiblity is false, cropping that object is impossible
             if not visibility[obj]:
                 continue
             
-
             top = int(keypoint_2d_min[obj][1])
             left = int(keypoint_2d_min[obj][0])
             height = int(keypoint_2d_max[obj][1]) - int(keypoint_2d_min[obj][1])
@@ -163,6 +163,9 @@ class CropObject(object):
             if width<=0 or height<=0:
                 continue
             crop_tmp = resized_crop(image, top, left, height, width, size=self.opts.crop_img_size)
+
+            # For instance index
+            instance_index.append(th.as_tensor(obj))
 
             # copy for padding
             orignal_imgs.append(image)
@@ -188,6 +191,7 @@ class CropObject(object):
             outputs[Schema.QUATERNION] = th.tensor(visible_quat).reshape(-1, 4)
             outputs[Schema.SCALE] = th.tensor(visible_scale).reshape(-1, 3)
             outputs[Schema.BOX_2D] = th.tensor(visible_box_2d).reshape(-1, 4)
+            outputs[Schema.INDEX] = instance_index
 
             return outputs
         
@@ -199,6 +203,7 @@ class CropObject(object):
         outputs[Schema.QUATERNION] = th.stack(visible_quat).reshape(-1, 4)
         outputs[Schema.SCALE] = th.stack(visible_scale).reshape(-1, 3)
         outputs[Schema.BOX_2D] = th.stack(visible_box_2d).reshape(-1, 4)
+        outputs[Schema.INDEX] = th.stack(instance_index).reshape(-1, 1)
 
         return outputs
 
