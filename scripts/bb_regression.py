@@ -46,11 +46,7 @@ class AppSettings(Serializable):
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
     path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-box')
-<<<<<<< HEAD
-
-=======
     train: Trainer.Settings = Trainer.Settings()
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
     # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 8
     alpha: float = 0.5
@@ -107,6 +103,10 @@ class TrainLogger:
         image_with_box = plot_regressed_3d_bbox(input_image, keypoints_2d, proj_matrix, dimensions, quaternion, translations)
         
         self.writer.add_image('train_result_images', image_with_box[0:3], global_step=self.step)
+
+        print(inputs[Schema.INSTANCE_NUM])
+        print(inputs[Schema.INDEX])
+        print(inputs[Schema.INDEX].shape)
 
     def _on_step(self, step):
         """save current step"""

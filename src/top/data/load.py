@@ -109,10 +109,22 @@ def collate_cropped_img(data):
     out = defaultdict(list)
     # case that all objects in image are not visible
     # TODO(Jiyong): If all objects in batch are not visible, how to handle?
+
+    # For index of data in batch
+    idx = 0
+    batch_idx = []
     for d in data:
         if all(vis == 0 for vis in d[Schema.VISIBILITY]):
             continue
+
         [out[k].append(v) for k, v in d.items()]
+
+        batch_idx.append(idx)
+        idx += 1
+
+    for i, index in enumerate(out[Schema.INDEX]):
+        tmp = th.full(index.shape, batch_idx[i])
+        out[Schema.INDEX][i] = th.cat((tmp, index), dim=1)
 
     for k in out:
         v = out[k]

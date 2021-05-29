@@ -34,7 +34,8 @@ class Schema(Enum):
     INTRINSIC_MATRIX = "camera/intrinsics"
     CENTER_2D = "center_2d"
     SCALE_MAP = "scale_map"  # dense per-element scale prediction.
-
+    INDEX = "instance_index" # (batch_index, instance_index)
+    
 
 @encode.register(Schema)
 def encode_schema(obj: Schema) -> str:

@@ -22,9 +22,7 @@ class cv_colors(Enum):
     MINT = (239,255,66)
     YELLOW = (2,255,250)
 
-<<<<<<< HEAD
 
-=======
 def get_cube_points() -> th.Tensor:
     """ Get cube points, sorted in descending order by axes and coordinates. """
     points_3d = list(itertools.product(
@@ -34,15 +32,12 @@ def get_cube_points() -> th.Tensor:
     return points_3d
 
 def calc_location(box_2d, proj_matrix, dimension, quaternion, translations):
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
     #global orientation
     R = (quaternion_to_matrix(th.as_tensor(quaternion))
          .detach().cpu().numpy())
 
     # format 2d corners
-<<<<<<< HEAD
 
-=======
 #     xmin, ymin, xmax, ymax = box_2d
 
     # left top right bottom
@@ -67,7 +62,6 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, translations):
     vertices = get_cube_points() * dimension
     constraints = [vertices[indices]]
 #     constraints = list(itertools.permutations(vertices, 4))
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     best_loc = None
     best_error = [np.inf]
@@ -127,10 +121,6 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
     box_3d[..., :2] = np.flip(box_3d[..., :2], axis=(-1,))
     box_3d = box_3d * np.array([w, h, 1.0])
     box_3d = box_3d.astype(int)
-<<<<<<< HEAD
-
-=======
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     # CHW -> HWC
     if isinstance(img, th.Tensor):
@@ -164,9 +154,6 @@ def plot_3d_box(img, cam_to_img, rotation, dimension, center):
 
     return img
 
-<<<<<<< HEAD
-
-=======
 def plot_regressed_3d_bbox(img, points_2d, proj_matrix, dimension, quaternion, translations):
     # TODO(Jiyong): make with batch
     img = img[0]
@@ -190,6 +177,5 @@ def plot_regressed_3d_bbox(img, points_2d, proj_matrix, dimension, quaternion, t
 
     img = plot_3d_box(img, proj_matrix, rotation, dimension, location)
     img = th.as_tensor(img)
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     return img
