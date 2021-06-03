@@ -16,32 +16,23 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
     ymax = (box_2d[2] + ymin)
 
     # left top right bottom
-<<<<<<< HEAD
-=======
-    box_corners = [xmin, ymin, xmax, ymax]
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     dx = dimension[0] / 2
     dy = dimension[1] / 2
     dz = dimension[2] / 2
 
     vertices = []
-    for i in (-1,1):
-        for j in (-1,1):
-            for k in (-1,1):
-                vertices.append([i*dx, j*dy, k*dz])
-<<<<<<< HEAD
+    for i in (-1, 1):
+        for j in (-1, 1):
+            for k in (-1, 1):
+                vertices.append([i * dx, j * dy, k * dz])
 
-=======
-    
     constraints = list(itertools.permutations(vertices, 4))
-    print(len(constraints))
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
 
     # create pre M (the term with I and the R*X)
-    pre_M = np.zeros([4,4])
+    pre_M = np.zeros([4, 4])
     # 1's down diagonal
-    for i in range(0,4):
+    for i in range(0, 4):
         pre_M[i][i] = 1
 
     best_loc = None
@@ -59,7 +50,8 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
 
         X_array = [Xa, Xb, Xc, Xd]
 
-        # M: all 1's down diagonal, and upper 3x1 is Rotation_matrix * [x, y, z]
+        # M: all 1's down diagonal, and upper 3x1 is Rotation_matrix * [x, y,
+        # z]
         Ma = np.copy(pre_M)
         Mb = np.copy(pre_M)
         Mc = np.copy(pre_M)
@@ -68,32 +60,31 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
         M_array = [Ma, Mb, Mc, Md]
 
         # create A, b
-        A = np.zeros([4,3], dtype=np.float)
-        b = np.zeros([4,1])
+        A = np.zeros([4, 3], dtype=np.float)
+        b = np.zeros([4, 1])
 
-        indicies = [0,1,0,1]
+        indicies = [0, 1, 0, 1]
         for row, index in enumerate(indicies):
             X = X_array[row]
             M = M_array[row]
 
             # create M for corner Xx
             RX = np.dot(R, X)
-            M[:3,3] = RX.reshape(3)
+            M[:3, 3] = RX.reshape(3)
 
             K = proj_matrix[:3, :]
             M = np.dot(K, M)
 
             # ref: http://ywpkwon.github.io/pdf/bbox3d-study.pdf
-            A[row, :] = M[index,:3] - box_corners[row] * M[2,:3]
-            b[row] = box_corners[row] * M[2,3] - M[index,3]
-
+            A[row, :] = M[index, :3] - box_2d[row] * M[2, :3]
+            b[row] = box_2d[row] * M[2, 3] - M[index, 3]
 
         # solve here with least squares, since over fit will get some error
         loc, error, rank, s = np.linalg.lstsq(A, b, rcond=None)
 
         # found a better estimation
         if error < best_error:
-            count += 1 # for debugging
+            count += 1  # for debugging
             best_loc = loc
             best_error = error
             best_X = X_array
@@ -105,24 +96,17 @@ def calc_location(box_2d, proj_matrix, dimension, quaternion, gt_trans):
 
 
 if __name__ == '__main__':
-<<<<<<< HEAD
-
-=======
     box_2d = np.array([0.0273, 0.0623, 0.6438, 0.9307])
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
-    proj_matrix = np.array([1.6358e+00,  0.0000e+00,  1.9637e-02,  0.0000e+00,  
-                            0.0000e+00,  2.1811e+00, -3.0700e-03,  0.0000e+00,  
-                            0.0000e+00,  0.0000e+00, -1.0000e+00, -1.0000e-03,  
-                            0.0000e+00,  0.0000e+00, -1.0000e+00,  0.0000e+00]).reshape(4,4)
-<<<<<<< HEAD
+    proj_matrix = np.array([1.6358e+00, 0.0000e+00, 1.9637e-02, 0.0000e+00,
+                            0.0000e+00, 2.1811e+00, -3.0700e-03, 0.0000e+00,
+                            0.0000e+00, 0.0000e+00, -1.0000e+00, -1.0000e-03,
+                            0.0000e+00, 0.0000e+00, -1.0000e+00, 0.0000e+00]).reshape(4, 4)
+    dimension = np.array([0.1499, -0.4744, 0.7188, 0.4857])
+    quaternion = np.array([0.5547, 0.4986, -0.3726, 0.5521])
+    translations = np.array([-0.3957, 0.0739, -1.8345])
 
-=======
-    dimension = np.array([ 0.1499, -0.4744,  0.7188,  0.4857])
-    quaternion = np.array([0.5547,  0.4986, -0.3726,  0.5521])
->>>>>>> f800453d7f95b887c3b126c08b9b8d1750802a4b
-    translations = np.array([-0.3957,  0.0739, -1.8345])
-
-    location, X = calc_location(box_2d, proj_matrix, dimension, quaternion, translations)
+    location, X = calc_location(
+        box_2d, proj_matrix, dimension, quaternion, translations)
 
     print("cal_translations:", location)
     print("truth_translations:", translations)

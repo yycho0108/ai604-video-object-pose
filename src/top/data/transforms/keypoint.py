@@ -269,9 +269,11 @@ class BoxPoints2D:
     """
 
     def __init__(self, device: th.device,
-                 key_out: Hashable = 'points_2d_debug'):
+                 key_out: Hashable = 'points_2d_debug',
+                 key_out_3d: Hashable = None):
         self.device = device
         self.key_out = key_out
+        self.key_out_3d = key_out_3d
         vertices = list(itertools.product(
             *zip([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])))  # 8x3
         # NOTE(ycho): prepending centroid.
@@ -285,7 +287,6 @@ class BoxPoints2D:
         outputs = inputs.copy()
 
         # Parse inputs.
-        h, w = inputs[Schema.IMAGE].shape[-2:]
         rxn = th.as_tensor(inputs[Schema.ORIENTATION]).reshape(-1, 3, 3)
         txn = th.as_tensor(inputs[Schema.TRANSLATION]).reshape(-1, 3)
         scale = th.as_tensor(inputs[Schema.SCALE]).reshape(-1, 3)
@@ -308,6 +309,10 @@ class BoxPoints2D:
         # second operand is broadcasted to match the first.
         v = th.einsum('...ab, kb -> ...ka',
                       T[..., :3, :3], self.vertices) + T[..., None, :3, -1]
+        if self.key_out_3d:
+            v3 = th.einsum('...ab, kb -> ...ka',
+                           T_box[..., :3, :3], self.vertices) + T_box[..., None, :3, -1]
+            outputs[self.key_out_3d] = v3
         v[..., :-1] /= v[..., -1:]
 
         # NDC (-1~1) -> UV (0~1) coordinates

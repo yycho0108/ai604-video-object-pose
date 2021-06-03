@@ -18,7 +18,6 @@ numpy = [
     {version = ">=1.19,<1.20", python = ">=3.6,<3.7"},
     {version = ">=1.20", python = ">=3.7"}
 ]
-torch-xla = {url = "https://storage.googleapis.com/tpu-pytorch/wheels/torch_xla-1.7-cp36-cp36m-linux_x86_64.whl"}
 google-cloud-storage = "^1.37.1"
 
 [tool.poetry.dev-dependencies]

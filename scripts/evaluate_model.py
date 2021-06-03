@@ -24,20 +24,32 @@ import logging
 
 import torch as th
 from torchvision.transforms import Compose
+from torch.utils.data._utils.collate import default_collate
+from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
 
 from top.data.transforms import (
     Normalize,
     InstancePadding,
     DenseMapsMobilePose
 )
-from top.data.load import get_loaders, DatasetSettings
+from top.data.transforms.keypoint import (
+    BoxPoints2D
+)
+from top.data.transforms.bounding_box import (
+    SolveTranslation
+)
+from top.data.bbox_reg_util import CropObject
+from top.data.load import (DatasetSettings, collate_cropped_img, get_loaders)
 from top.data.schema import Schema
+from top.train.trainer import Saver
 from top.run.metrics_util import (
     IoU, Box, AveragePrecision, HitMiss)
 from top.run.path_util import RunPath, get_latest_file
 from top.run.app_util import update_settings
+from top.run.torch_util import resolve_device
 
 from test_keypoint_decoder import GroundTruthDecoder
+from top.model.bbox_3d import BoundingBoxRegressionModel
 
 
 def safe_divide(i1, i2, eps: float = 1e-6):
@@ -58,7 +70,8 @@ class AppSettings(Serializable):
     # threshold for the visibility
     vis_thresh: float = 0.1
 
-    batch_size: int = 1  # FIXME(ycho): Restore functional `coolate_fn`.
+    # FIXME(ycho): Restore functional `collate_fn`.
+    batch_size: int = 1
     # Max number of samples from the test dataset to evaluate.
     max_num: int = -1
     report_file: str = '/tmp/report.txt'
@@ -66,7 +79,11 @@ class AppSettings(Serializable):
 
 
 class FormatLabel:
-    """`torch.Transform` version of `ObjectronParser`."""
+    """`torch.Transform` version of `ObjectronParser`.
+
+    NOTE(ycho): Despite how it looks, this transform does NOT override inputs,
+    since input keys are `Schema`s and Settings are `str`s, (by default).
+    """
 
     @dataclass
     class Settings(Serializable):
@@ -155,11 +172,21 @@ class Evaluator(object):
         """Evaluates a batch of serialized tf.Example protos."""
         opts = self.opts
 
-        if isinstance(self.model, GroundTruthDecoder):
+        # Same as `predict()`, but not on just images for models
+        # that require more information (GroundTruthDecoder, BboxWrapper)
+        prev_mode = self.model.training
+        self.model.eval()
+        with th.no_grad():
             results = self.model(batch)
-        else:
-            results = self.predict(batch[Schema.IMAGE],
-                                   batch_size=len(batch))
+        self.model.train(prev_mode)
+
+        if results is None:
+            return
+
+        # NOTE(ycho): For BboxWrapper we do not pass in collated input.
+        if isinstance(self.model, BboxWrapper):
+            batch = default_collate(batch)
+
         # NOTE(ycho): We need results as a list of 3d boxes. Yep!
         # Since we already parsed everything, no need to be re-parse
         labels = {k: (v.detach().cpu().numpy() if isinstance(
@@ -588,15 +615,125 @@ class Evaluator(object):
         return point[0] > 0 and point[0] < 1 and point[1] > 0 and point[1] < 1
 
 
+class BboxWrapper(th.nn.Module):
+    def __init__(self, model: th.nn.Module, device: th.device):
+        super().__init__()
+        self.model = model
+        self.device = device
+
+        self.transform = Compose([
+            CropObject(CropObject.Settings()),
+            Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,)))
+        ])
+        self.solve_translation = SolveTranslation()
+        self.box_points = BoxPoints2D(device,
+                                      key_out=Schema.KEYPOINT_2D,
+                                      key_out_3d=Schema.KEYPOINT_3D)
+
+    def forward(self, inputs: List[Dict[Hashable, th.Tensor]]
+                ) -> List[List[Tuple[th.Tensor, th.Tensor]]]:
+        inputs0 = inputs.copy()
+
+        # NOTE(ycho): custom transform + crop-aware collation.
+        inputs = [self.transform(x) for x in inputs]
+        inputs = collate_cropped_img(inputs)
+        if (Schema.CROPPED_IMAGE not in inputs or
+                len(inputs[Schema.CROPPED_IMAGE]) <= 0):
+            return None
+
+        # if we use the crop-aware collation, (batch_idx, instance_idx)
+        indices = inputs[Schema.INDEX]
+        dim, quat = self.model(inputs[Schema.CROPPED_IMAGE].to(
+            self.device))
+
+        # NOTE(ycho): len(image) appropriated for batch_size
+        batch_size = len(inputs0)
+        outputs = [[] for _ in range(batch_size)]
+
+        for i, (ii, s, q) in enumerate(zip(indices, dim, quat)):
+            batch_index, instance_index = ii
+            P = inputs0[batch_index][Schema.PROJECTION].reshape(4, 4)
+            R = quaternion_to_matrix(q[None])[0]
+
+            #R2 = inputs0[batch_index][
+            #    Schema.ORIENTATION][instance_index].reshape(
+            #    3, 3)
+            #q2 = matrix_to_quaternion(R2[None])[0]
+            #s2 = inputs0[batch_index][Schema.SCALE][instance_index]
+
+            # Fix BOX_2D convention.
+            box_i, box_j, box_h, box_w = inputs[Schema.BOX_2D][i]
+            box_2d = th.as_tensor([box_i, box_j, box_i + box_h, box_j + box_w])
+            box_2d = 2.0 * (box_2d - 0.5)
+
+            # Solve translation
+            translation, _ = self.solve_translation({
+                # inputs from dataset
+                Schema.PROJECTION: P,
+                Schema.BOX_2D: box_2d,
+                # inputs from network
+                Schema.ORIENTATION: R,
+                Schema.QUATERNION: q,
+                Schema.SCALE: s
+                # inputs from dataset (ground-truth)
+                # Schema.ORIENTATION: R2,
+                # Schema.QUATERNION: q2,
+                # Schema.SCALE: s2
+            })
+
+            translation = th.as_tensor(translation, device=R.device)
+            if translation[-1] > 0:
+                translation *= -1.0
+            #print('tr-solve')
+            #print(translation)
+            #print('tr-gt')
+            #print(inputs0[batch_index][Schema.TRANSLATION][instance_index])
+
+            # Convert to box-points
+            box_out = self.box_points({
+                Schema.ORIENTATION: R.to(self.device),
+                Schema.TRANSLATION: translation.to(self.device),
+                Schema.SCALE: s.to(self.device),
+                Schema.PROJECTION: P.to(self.device),
+                Schema.INSTANCE_NUM: 1
+            })
+
+            entry = (
+                box_out[Schema.KEYPOINT_2D][0, ..., :2].detach().cpu().numpy(),
+                box_out[Schema.KEYPOINT_3D][0].detach().cpu().numpy()
+            )
+            outputs[batch_index].append(entry)
+        return outputs
+
+
 def load_model():
     if False:
         # Instantiation ...
         device = resolve_device('cuda')
-        model = KeypointNetwork2D(opts.model).to(device)
+        opts = KeypointNetwork2D.Settings()
+        # opts.load...()
+        model = KeypointNetwork2D(opts).to(device)
 
         # Load checkpoint.
         ckpt_file = get_latest_file('/tmp/ai604-kpt/run-031/ckpt/')
         Saver(model, None).load(ckpt_file)
+    elif True:
+        device = resolve_device('cuda')
+        from bb_regression import AppSettings
+
+        # Configure checkpoints + options
+        ckpt = '/media/ssd/models/top/ckpt/step-117999.zip'
+        opts = BoundingBoxRegressionModel.Settings()
+        opts.load('/media/ssd/models/top/opts.yaml')
+
+        # 1. load bbox regression model
+        model = BoundingBoxRegressionModel(opts).to(device)
+        logging.info(F'Loading checkpoint {ckpt} ...')
+        Saver(model).load(ckpt)
+
+        # 2. *but* use the wrapper to convert to/from raw inputs/outputs
+        # required for the `BoundingBoxRegressionModel`.
+        return BboxWrapper(model, device)
     else:
         return GroundTruthDecoder()
 
@@ -611,26 +748,49 @@ def main():
     model = load_model()
     evaluator = Evaluator(opts, model)
 
-    transform = Compose([
-        DenseMapsMobilePose(DenseMapsMobilePose.Settings(), th.device('cpu')),
-        Normalize(Normalize.Settings()),
-        FormatLabel(FormatLabel.Settings(), opts.vis_thresh),
-        InstancePadding(InstancePadding.Settings()),
-    ])
+    if isinstance(model, GroundTruthDecoder):
+        # for Keypoints (+ ground-truth kpt-style decoder)
+        transform = Compose([
+            DenseMapsMobilePose(DenseMapsMobilePose.Settings(),
+                                th.device('cpu')),
+            Normalize(Normalize.Settings()),
+            InstancePadding(InstancePadding.Settings()),
+            # TODO(ycho): Does the order between padding<->label matter here?
+            FormatLabel(FormatLabel.Settings(), opts.vis_thresh),
+        ])
+        collate_fn = None
+    elif isinstance(model, BboxWrapper):
+        # for Bounding Box
+        transform = Compose([
+            # NOTE(ycho): `FormatLabel` must be applied prior
+            # to `CropObject` since it modifies the requisite tensors.
+            FormatLabel(FormatLabel.Settings(), opts.vis_thresh),
+            # CropObject(CropObject.Settings()),
+            # Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,)))
+        ])
+
+        # NOTE(ycho): passthrough collation;
+        # actual collation will be handled independently.
+        def collate_fn(data):
+            return data
 
     _, test_loader = get_loaders(opts.dataset,
                                  th.device('cpu'),
                                  opts.batch_size,
-                                 transform=transform)
+                                 transform=transform,
+                                 collate_fn=collate_fn)
 
     # Run evaluation ...
-    for i, data in enumerate(tqdm.tqdm(test_loader)):
-        evaluator.evaluate(data)
-        if (opts.max_num >= 0) and (i >= opts.max_num):
-            break
-
-    evaluator.finalize()
-    evaluator.write_report()
+    try:
+        for i, data in enumerate(tqdm.tqdm(test_loader)):
+            evaluator.evaluate(data)
+            if (opts.max_num >= 0) and (i >= opts.max_num):
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        evaluator.finalize()
+        evaluator.write_report()
 
 
 if __name__ == '__main__':

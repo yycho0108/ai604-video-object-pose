@@ -79,8 +79,11 @@ class BoundingBoxRegressionModel(nn.Module):
         # FIXME(Jiyong): hardcoded feature layer
         x = self.features(x)['0']
         # confidence = self.confidence(x)
-        dimension = th.squeeze(self.dimension(x))
-        quaternions = th.squeeze(self.quaternions(x))
+        dimension = self.dimension(x)
+        quaternions = self.quaternions(x)
+        # TODO(ycho): Check if necessary
+        # dimension = th.squeeze(dimension)
+        # quaternions = th.squeeze(quaternions)
 
         # # NOTE(Jiyong): for multibin
         # # valid cos and sin values are obtained by applying an L2 norm.
