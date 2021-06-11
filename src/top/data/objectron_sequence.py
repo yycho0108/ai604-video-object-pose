@@ -91,6 +91,9 @@ class ObjectronSequence(th.utils.data.IterableDataset):
         self._index_map = {c: i for i, c in enumerate(self.opts.classes)}
         self._class_map = {i: c for i, c in enumerate(self.opts.classes)}
 
+        client = storage.Client.create_anonymous_client()
+        self.bucket = client.bucket(self.opts.bucket_name)
+
     def _index_from_class(self, cls: str):
         return self._index_map[cls]
 
@@ -154,8 +157,13 @@ class ObjectronSequence(th.utils.data.IterableDataset):
             # TODO(ycho): Adapt this code block to be more like
             # `ObjectronDetection` instead, to avoid dependency
             # on torch_xla which is apparently buggy for jiyong.
+
+            # Load shard from remote GS bucket.
+            blob = self.bucket.blob(shard)
+            content = blob.download_as_bytes()
+            fp = io.BytesIO(content)
             reader = sequence_loader(
-                shard_name, None, self.opts.context,
+                fp, None, self.opts.context,
                 self.opts.features, None)
 
             # Wonder how many samples there are per-shard??

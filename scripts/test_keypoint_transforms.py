@@ -36,17 +36,26 @@ def main():
     device = resolve_device('cpu')
 
     xfm = Compose([
-        BoxPoints2D(device=device),
+        BoxPoints2D(
+            device=device, key_out='points_2d_debug',
+            key_out_3d='points_3d_debug'),
         DrawKeypoints(DrawKeypoints.Settings()),
-        DenseMapsMobilePose(DenseMapsMobilePose.Settings(), device),
-        InstancePadding(InstancePadding.Settings()),
-    ])
+        DenseMapsMobilePose(
+            DenseMapsMobilePose.Settings(),
+            device),
+        InstancePadding(InstancePadding.Settings()), ])
 
     dataset, _ = get_loaders(opts.dataset, device, None, xfm)
 
     for data in dataset:
-        # print(data['points_2d_debug'])
-        # print(data[Schema.KEYPOINT_2D])
+        #print('2D')
+        #print(data['points_2d_debug'])
+        #print(data[Schema.KEYPOINT_2D])
+
+        #print('3D')
+        #print(data['points_3d_debug'])
+        #print(data[Schema.KEYPOINT_3D])
+
         save_image(data[Schema.IMAGE] / 255.0, F'/tmp/img.png')
         for i, img in enumerate(data[Schema.HEATMAP]):
             save_image(img, F'/tmp/heatmap-{i}.png',

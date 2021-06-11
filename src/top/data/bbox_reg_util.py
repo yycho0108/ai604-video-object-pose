@@ -6,7 +6,7 @@ Reference:
 
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Hashable, Dict
 import numpy as np
 import os
 import json
@@ -22,26 +22,25 @@ from top.data.schema import Schema
 from top.run.box_generator import Box
 
 
-
 class NumpyEncoder(json.JSONEncoder):
-    """
-    Enables writing json with numpy arrays to file
-    """
+    """Enables writing json with numpy arrays to file."""
+
     def default(self, obj):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
-        return json.JSONEncoder.default(self,obj)
+        return json.JSONEncoder.default(self, obj)
 
 
 class ClassAverages:
-    """
-    Class will hold the average dimension for a class, regressed value is the residual
-    """
+    """Class will hold the average dimension for a class, regressed value is
+    the residual."""
+
     def __init__(self, classes=[]):
         self.dimension_map = {}
-        self.filename = os.path.abspath(os.path.dirname(__file__)) + '/class_averages.json'
+        self.filename = os.path.abspath(
+            os.path.dirname(__file__)) + '/class_averages.json'
 
-        if len(classes) == 0: # eval mode
+        if len(classes) == 0:  # eval mode
             self.load_items_from_file()
 
         for detection_class in classes:
@@ -52,7 +51,6 @@ class ClassAverages:
             self.dimension_map[class_]['count'] = 0
             self.dimension_map[class_]['total'] = np.zeros(3, dtype=np.double)
 
-
     def add_item(self, class_, dimension):
         class_ = class_.lower()
         self.dimension_map[class_]['count'] += 1
@@ -61,7 +59,8 @@ class ClassAverages:
 
     def get_item(self, class_):
         class_ = class_.lower()
-        return self.dimension_map[class_]['total'] / self.dimension_map[class_]['count']
+        return self.dimension_map[class_]['total'] / \
+            self.dimension_map[class_]['count']
 
     def dump_to_file(self):
         f = open(self.filename, "w")
@@ -73,7 +72,8 @@ class ClassAverages:
         dimension_map = json.load(f)
 
         for class_ in dimension_map:
-            dimension_map[class_]['total'] = np.asarray(dimension_map[class_]['total'])
+            dimension_map[class_]['total'] = np.asarray(
+                dimension_map[class_]['total'])
 
         self.dimension_map = dimension_map
 
@@ -81,9 +81,24 @@ class ClassAverages:
         return class_.lower() in self.dimension_map
 
 
+class CropObjectImage(object):
+
+    @dataclass
+    class Settings(Serializable):
+        crop_img_size: Tuple[int, int] = (224, 224)
+
+    def __init__(self, opts: Settings):
+        self.opts = opts
+
+    def __call__(self, inputs: Dict[Hashable, th.Tensor]):
+        num_inst = inputs[Schema.INSTANCE_NUM]
+        image = inputs[Schema.IMAGE]
+        points = inputs[Schema.KEYPOINT_2D]
+
+
 class CropObject(object):
-    """
-    Crop object from image.
+    """Crop object from image.
+
     2D keypoint -> 2D box(min/max) -> crop
     """
 
@@ -108,32 +123,35 @@ class CropObject(object):
         keypoints_2d_uv = inputs[Schema.KEYPOINT_2D]
         num_vertices = keypoints_2d_uv.shape[-2]
         keypoints_2d_uv = keypoints_2d_uv.reshape(-1, num_vertices, 3)
-        
-        keypoints_2d = th.as_tensor(keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
+
+        keypoints_2d = th.as_tensor(
+            keypoints_2d_uv) * th.as_tensor([w, h, 1.0])
 
         # clamp for the case that keypoints is in out of image
-        keypoints_2d_clamp = th.clamp(th.as_tensor(keypoints_2d_uv), min=0, max=1)
-        keypoints_2d_clamp = th.as_tensor(keypoints_2d_clamp) * th.as_tensor([w, h, 1.0])
-        keypoints_2d_clamp = keypoints_2d_clamp.reshape(-1,num_vertices,3)
+        keypoints_2d_clamp = th.clamp(
+            th.as_tensor(keypoints_2d_uv), min=0, max=1)
+        keypoints_2d_clamp = th.as_tensor(
+            keypoints_2d_clamp) * th.as_tensor([w, h, 1.0])
+        keypoints_2d_clamp = keypoints_2d_clamp.reshape(-1, num_vertices, 3)
 
-        proj_matrix = proj_matrix.reshape(-1,4,4)
+        proj_matrix = proj_matrix.reshape(-1, 4, 4)
 
         orientation = th.as_tensor(orientation)
-        orientation = orientation.reshape(-1,3,3)
+        orientation = orientation.reshape(-1, 3, 3)
         quaternions = matrix_to_quaternion(orientation)
 
         scale = th.as_tensor(scale)
-        scale = scale.reshape(-1,3)
+        scale = scale.reshape(-1, 3)
 
         translation = th.as_tensor(translation)
-        translation = translation.reshape(-1,3)
+        translation = translation.reshape(-1, 3)
 
         keypoint_2d_min = th.min(keypoints_2d_clamp, dim=1).values
         keypoint_2d_max = th.max(keypoints_2d_clamp, dim=1).values
         # For calculate translations using 2D constraints
         keypoint_2d_min_uv = keypoint_2d_min / th.as_tensor([w, h, 1.0])
         keypoint_2d_max_uv = keypoint_2d_max / th.as_tensor([w, h, 1.0])
-        
+
         orignal_imgs = []
         proj_matrices = []
         visible_crop_img = []
@@ -143,15 +161,17 @@ class CropObject(object):
         visible_scale = []
         visible_box_2d = []
         instance_index = []
-        
+
         for obj in range(num_object):
-            # NOTE(Jiyion): If visiblity is false, cropping that object is impossible
+            # NOTE(Jiyion): If visiblity is false, cropping that object is
+            # impossible
             if not visibility[obj]:
                 continue
-            
+
             top = int(keypoint_2d_min[obj][1])
             left = int(keypoint_2d_min[obj][0])
-            height = int(keypoint_2d_max[obj][1]) - int(keypoint_2d_min[obj][1])
+            height = int(keypoint_2d_max[obj][1]
+                         ) - int(keypoint_2d_min[obj][1])
             width = int(keypoint_2d_max[obj][0]) - int(keypoint_2d_min[obj][0])
             # For calculate translations using 2D constraints
             top_uv = keypoint_2d_min_uv[obj][1]
@@ -160,9 +180,15 @@ class CropObject(object):
             width_uv = keypoint_2d_max_uv[obj][0] - keypoint_2d_min_uv[obj][0]
 
             # Occasionally we get an empty ROI due to floating-point precision
-            if width<=0 or height<=0:
+            if width <= 0 or height <= 0:
                 continue
-            crop_tmp = resized_crop(image, top, left, height, width, size=self.opts.crop_img_size)
+            crop_tmp = resized_crop(
+                image,
+                top,
+                left,
+                height,
+                width,
+                size=self.opts.crop_img_size)
 
             # For instance index
             instance_index.append(th.as_tensor(obj))
@@ -176,29 +202,37 @@ class CropObject(object):
             visible_trans.append(translation[obj])
             visible_quat.append(quaternions[obj])
             visible_scale.append(scale[obj])
-            visible_box_2d.append(th.as_tensor([top_uv, left_uv, height_uv, width_uv]))
-        
+            visible_box_2d.append(th.as_tensor(
+                [top_uv, left_uv, height_uv, width_uv]))
+
         # shallow copy
         outputs = inputs.copy()
         # case that all objects in image are not visible
         # TODO(Jiyong): If all objects in batch are not visible, how to handle?
         if all(vis == 0 for vis in visibility):
-            outputs[Schema.IMAGE] = th.tensor(orignal_imgs).reshape(-1, c, h, w)
-            outputs[Schema.PROJECTION] = th.tensor(proj_matrices).reshape(-1, 4, 4)
-            outputs[Schema.CROPPED_IMAGE] = th.tensor(visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
-            outputs[Schema.KEYPOINT_2D] = th.tensor(visible_point_2d).reshape(-1, num_vertices, 3)
-            outputs[Schema.TRANSLATION] = th.tensor(visible_trans).reshape(-1, 3)
+            outputs[Schema.IMAGE] = th.tensor(
+                orignal_imgs).reshape(-1, c, h, w)
+            outputs[Schema.PROJECTION] = th.tensor(
+                proj_matrices).reshape(-1, 4, 4)
+            outputs[Schema.CROPPED_IMAGE] = th.tensor(
+                visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
+            outputs[Schema.KEYPOINT_2D] = th.tensor(
+                visible_point_2d).reshape(-1, num_vertices, 3)
+            outputs[Schema.TRANSLATION] = th.tensor(
+                visible_trans).reshape(-1, 3)
             outputs[Schema.QUATERNION] = th.tensor(visible_quat).reshape(-1, 4)
             outputs[Schema.SCALE] = th.tensor(visible_scale).reshape(-1, 3)
             outputs[Schema.BOX_2D] = th.tensor(visible_box_2d).reshape(-1, 4)
             outputs[Schema.INDEX] = instance_index
 
             return outputs
-        
+
         outputs[Schema.IMAGE] = th.stack(orignal_imgs).reshape(-1, c, h, w)
         outputs[Schema.PROJECTION] = th.stack(proj_matrices).reshape(-1, 4, 4)
-        outputs[Schema.CROPPED_IMAGE] = th.stack(visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
-        outputs[Schema.KEYPOINT_2D] = th.stack(visible_point_2d).reshape(-1, num_vertices, 3)
+        outputs[Schema.CROPPED_IMAGE] = th.stack(
+            visible_crop_img).reshape(-1, c, self.opts.crop_img_size[0], self.opts.crop_img_size[1])
+        outputs[Schema.KEYPOINT_2D] = th.stack(
+            visible_point_2d).reshape(-1, num_vertices, 3)
         outputs[Schema.TRANSLATION] = th.stack(visible_trans).reshape(-1, 3)
         outputs[Schema.QUATERNION] = th.stack(visible_quat).reshape(-1, 4)
         outputs[Schema.SCALE] = th.stack(visible_scale).reshape(-1, 3)
@@ -206,4 +240,3 @@ class CropObject(object):
         outputs[Schema.INDEX] = th.stack(instance_index).reshape(-1, 1)
 
         return outputs
-

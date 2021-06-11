@@ -106,29 +106,33 @@ def get_loaders(opts: DatasetSettings, device: th.device,
 
 
 def collate_cropped_img(data):
+    """Collation to handle denegerate cases with no visible objects in image.
+
+    TODO(Jiyong): If all objects in batch are not visible, how to handle?
+    """
     out = defaultdict(list)
-    # case that all objects in image are not visible
-    # TODO(Jiyong): If all objects in batch are not visible, how to handle?
 
     # For index of data in batch
     idx = 0
     batch_idx = []
     for d in data:
+        # Skip entries in the batch with no visible objects.
         if all(vis == 0 for vis in d[Schema.VISIBILITY]):
             continue
-
+        # AoS -> SoA
         [out[k].append(v) for k, v in d.items()]
-
         batch_idx.append(idx)
         idx += 1
 
+    # Update Schema.INDEX with batch information.
     for i, index in enumerate(out[Schema.INDEX]):
         tmp = th.full(index.shape, batch_idx[i])
         out[Schema.INDEX][i] = th.cat((tmp, index), dim=1)
 
+    # Finally, collate all outputs with `cat` instead of `stack`.
     for k in out:
         v = out[k]
         if len(v) > 0 and isinstance(v[0], th.Tensor):
             out[k] = th.cat(v, dim=0)
 
-    return out
+    return dict(out)
