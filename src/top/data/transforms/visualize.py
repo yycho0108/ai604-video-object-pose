@@ -71,7 +71,7 @@ class DrawBoundingBoxFromKeypoints:
         # NOTE(ycho): configurable input, in case of augmented or cropped
         # image.
         key_in: Schema = Schema.IMAGE
-        key_out: str = 'rendered_keypoints'  # No Schema assigned for now
+        key_out: str = 'img_w_bbox'  # No Schema assigned for now
 
     def __init__(self, opts: Settings):
         self.opts = opts
@@ -88,7 +88,6 @@ class DrawBoundingBoxFromKeypoints:
         # NOTE(ycho): The Objectron dataset flipped their convention
         # so that the point is ordered in a minor-major axis order.
         points = points_uv * th.as_tensor([w, h, 1.0])
-        out = th.zeros_like(inputs[self.opts.key_in])
         num_inst = inputs[Schema.INSTANCE_NUM]
         n = int(num_inst)
 
@@ -105,17 +104,21 @@ class DrawBoundingBoxFromKeypoints:
             return (int(x[0]), int(x[1]))
 
         # Draw 3d bounding box per object.
+        col = 255 if (image.dtype == np.uint8) else 1.0
+
         for i in range(n):
             box = points[i]
+            for kpt in box[1:]:
+                cv2.circle(image, _as_point(kpt), 3, (0, 0, col), 3)
             for j, (src, dst) in enumerate([
                     (0, 4), (1, 5), (2, 6), (3, 7),
                     (0, 2), (4, 6), (1, 3), (5, 7),
                     (0, 1), (2, 3), (4, 5), (6, 7)]):
-                color = (1.0, 0.0, 0.0) if j < 4 else (0.0, 0.0, 1.0)
+                color = (0, 0, col)
                 image = cv2.line(
                     image, _as_point(
                         box[src + 1]), _as_point(
-                        box[dst + 1]), color, 1)
+                        box[dst + 1]), color, 2)
         image = th.as_tensor(image.transpose(2, 0, 1))
 
         outputs[self.opts.key_out] = image
@@ -176,8 +179,6 @@ class DrawKeypointMap:
 
         # NOTE(ycho): Produce per-keypoint colored heatmap
         # into a single (slightly ambiguous) visualization.
-        # print(kpt_heatmap.shape)  # (1,64,64...??)
-        # print(self.colors.shape)
         colored_heatmap = th.einsum(
             '...khw, kc -> ...chw',
             kpt_heatmap,

@@ -14,14 +14,12 @@ from pytorch3d.transforms import quaternion_to_matrix
 from top.data.transforms import (
     Normalize,
     InstancePadding,
-    DenseMapsMobilePose
+    DenseMapsMobilePose,
+    BoxPoints2D,
+    SolveTranslation,
+    DrawBoundingBoxFromKeypoints
 )
-from top.data.transforms.keypoint import (
-    BoxPoints2D
-)
-from top.data.transforms.bounding_box import (
-    SolveTranslation
-)
+
 from top.data.bbox_reg_util import CropObject
 from top.data.load import (DatasetSettings, collate_cropped_img, get_loaders)
 from top.data.schema import Schema
@@ -71,8 +69,15 @@ def main():
     # translation solver?
     solve_translation = SolveTranslation()
 
+    box_points = BoxPoints2D(th.device('cpu'), Schema.KEYPOINT_2D)
+    draw_bbox = DrawBoundingBoxFromKeypoints(
+        DrawBoundingBoxFromKeypoints.Settings())
+
     # eval
     for data in test_loader:
+        # Skip occasional batches without any images.
+        if Schema.CROPPED_IMAGE not in data:
+            continue
 
         with th.no_grad():
             # run inference
@@ -83,7 +88,7 @@ def main():
             logging.debug('Q {} {}'.format(quat, quat2))
             # trans = data[Schema.TRANSLATION]
 
-            if True:
+            if False:
                 dim = dim2
                 quat = quat2
                 R = quaternion_to_matrix(quat)
@@ -93,15 +98,14 @@ def main():
             input_image = data[Schema.IMAGE].detach().cpu()
             proj_matrix = (
                 data[Schema.PROJECTION].detach().cpu().reshape(-1, 4, 4))
-            # keypoints_2d = data[Schema.KEYPOINT_2D].detach().cpu()
+
+            # Solve translations.
             translations = []
             for i in range(len(proj_matrix)):
-
                 box_i, box_j, box_h, box_w = data[Schema.BOX_2D][i]
                 box_2d = th.as_tensor(
                     [box_i, box_j, box_i + box_h, box_j + box_w])
                 box_2d = 2.0 * (box_2d - 0.5)
-
                 args = {
                     # inputs from dataset
                     Schema.PROJECTION: proj_matrix[i],
@@ -111,34 +115,48 @@ def main():
                     Schema.QUATERNION: quat[i],
                     Schema.SCALE: dim[i]
                 }
-
                 # Solve translation
                 translation, _ = solve_translation(args)
                 translations.append(translation)
-
             translations = th.as_tensor(translations, dtype=th.float32)
-            dimensions = dim.detach().cpu()
-            quaternion = quat.detach().cpu()
-            translations = translations.detach().cpu()
 
-            #print(input_image.shape)
-            #print(data[Schema.BOX_2D].shape)
-            #print(proj_matrix.shape)
-            #print(translations.shape)
-            #print(dimensions.shape)
-            #print(quaternion.shape)
+            if True:
+                print('num instances = {}'.format(len(translations)))
+                pred_data = {
+                    Schema.IMAGE: data[Schema.IMAGE][0],
+                    Schema.ORIENTATION: R.cpu(),
+                    Schema.TRANSLATION: translations,
+                    Schema.SCALE: dim.cpu(),
+                    Schema.PROJECTION: proj_matrix[0],
+                    Schema.INSTANCE_NUM: len(proj_matrix),
+                }
+                pred_data = box_points(pred_data)
+                pred_data = draw_bbox(pred_data)
+                image_with_box = pred_data['img_w_bbox']
+            else:
+                dimensions = dim.detach().cpu()
+                quaternion = quat.detach().cpu()
+                translations = translations.detach().cpu()
 
-            # draw box
-            image_with_box = plot_regressed_3d_bbox(
-                input_image,
-                # keypoints_2d,
-                # data[Schema.BOX_2D],
-                data[Schema.KEYPOINT_2D],
-                proj_matrix,
-                dimensions,
-                quaternion,
-                translations)
+                #print(input_image.shape)
+                #print(data[Schema.BOX_2D].shape)
+                #print(proj_matrix.shape)
+                #print(translations.shape)
+                #print(dimensions.shape)
+                #print(quaternion.shape)
 
+                # draw box
+                image_with_box = plot_regressed_3d_bbox(
+                    input_image,
+                    # keypoints_2d,
+                    # data[Schema.BOX_2D],
+                    data[Schema.KEYPOINT_2D],
+                    proj_matrix,
+                    dimensions,
+                    quaternion,
+                    translations)
+
+            plt.clf()
             plt.imshow(image_with_box.permute(1, 2, 0))
             plt.pause(0.1)
 
