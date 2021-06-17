@@ -4,7 +4,7 @@
 # docker run -p 6006:6006/ --volume /data:/home/user --shm-size 32G -it top
 
 # FROM nvidia/cuda:11.0-base
-FROM 763104351884.dkr.ecr.ap-northeast-2.amazonaws.com/pytorch-training:1.8.1-gpu-py36-cu111-ubuntu18.04
+FROM 763104351884.dkr.ecr.ap-northeast-2.amazonaws.com/pytorch-training:1.6.0-gpu-py36-cu101-ubuntu16.04
 
 RUN apt-get update && apt-get -y install sudo
 
