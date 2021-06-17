@@ -3,7 +3,7 @@
 import torch as th
 
 from typing import Hashable
-from torchvision.transforms import Compose, Resize, ToTensor
+from torchvision.transforms import Compose
 
 from top.run.app_util import update_settings
 from top.data.load import (DatasetSettings, get_loaders)
@@ -28,14 +28,6 @@ def _to_image(x: th.Tensor):
     x = (x * 0.25) + 0.5
     return x.permute((1, 2, 0)).detach().cpu().numpy()
 
-class ToTensorWithDict:
-    def __init__(self, key:Hashable):
-        self.key=key
-        self.xfm = ToTensor()
-    def __call__(self, x):
-        y=x.copy()
-        y[self.key]=self.xfm(y[self.key])
-        return y
 
 def main():
     opts = DatasetSettings()
@@ -43,7 +35,6 @@ def main():
     key_out = '__aug_img__'  # Try to prevent key collision
     transform = Compose([
         InstancePadding(InstancePadding.Settings()),
-        # ToTensorWithDict(key
         PhotometricAugment(PhotometricAugment.Settings(key_out=key_out)),
         Normalize(Normalize.Settings(keys=(Schema.IMAGE, key_out,))),
     ])

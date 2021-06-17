@@ -42,9 +42,9 @@ rm "${MYDIR}/${PROJECT_NAME}.pem" || true
 aws ec2 create-key-pair --key-name "${PROJECT_NAME}" --region "${AWS_REGION}" \
     --query 'KeyMaterial' --output text > "${MYDIR}/${PROJECT_NAME}.pem"
     chmod 600 "${MYDIR}/${PROJECT_NAME}.pem"
-    aws ec2 create-security-group --group-name "${PROJECT_NAME}" --description "${PROJECT_NAME}"
-    aws ec2 authorize-security-group-ingress --group-name "${PROJECT_NAME}" \
-        --ip-permissions "[{\"IpProtocol\": \"tcp\", \"FromPort\": 0, \"ToPort\": 65535, \"IpRanges\": [{\"CidrIp\": \"$HOST_IP/24\"}]}]"
+aws ec2 create-security-group --group-name "${PROJECT_NAME}" --description "${PROJECT_NAME}"
+aws ec2 authorize-security-group-ingress --group-name "${PROJECT_NAME}" \
+    --ip-permissions "[{\"IpProtocol\": \"tcp\", \"FromPort\": 0, \"ToPort\": 65535, \"IpRanges\": [{\"CidrIp\": \"$HOST_IP/24\"}]}]"
 
 # Finally, launch!
 AWS_LAUNCH_JSON=$(aws ec2 run-instances \

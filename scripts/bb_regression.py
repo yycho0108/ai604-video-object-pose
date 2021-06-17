@@ -1,6 +1,6 @@
-"""
-(Like YOLO v3) 2D object detector -> 2D Bounding Box -> crop the images
-feature map -> FC(confidence/scale/orientation) -> project 2D to 3D bounding box of cropped images
+"""(Like YOLO v3) 2D object detector -> 2D Bounding Box -> crop the images
+feature map -> FC(confidence/scale/orientation) -> project 2D to 3D bounding
+box of cropped images.
 
 Reference:
     3D Bounding Box Estimation Using Deep Learning and Geometry(https://arxiv.org/abs/1612.00496)
@@ -13,6 +13,7 @@ from simple_parsing import Serializable
 from typing import Tuple, Dict, Any
 import torch.autograd.profiler as profiler
 from tqdm.auto import tqdm
+from pathlib import Path
 
 import torch as th
 import torch.nn as nn
@@ -42,11 +43,11 @@ from top.data.bbox_reg_util import CropObject
 @dataclass
 class AppSettings(Serializable):
     model: BoundingBoxRegressionModel.Settings = BoundingBoxRegressionModel.Settings()
-    
+
     # Dataset selection options.
     dataset: DatasetSettings = DatasetSettings()
     padding: InstancePadding.Settings = InstancePadding.Settings()
-    path: RunPath.Settings = RunPath.Settings(root='/tmp/ai604-box')
+    path: RunPath.Settings = RunPath.Settings(root='~/.cache/ai604/box/')
     train: Trainer.Settings = Trainer.Settings()
     # FIXME(Jiyong): need to test padding for batch
     batch_size: int = 8
@@ -64,6 +65,7 @@ class TrainLogger:
     """
     Logging during training - specifically, tqdm-based logging to the shell and tensorboard.
     """
+
     def __init__(self, hub: Hub, writer: SummaryWriter, period: int):
         self.step = None
         self.hub = hub
@@ -79,12 +81,21 @@ class TrainLogger:
         loss_orient = loss["orientation"].detach().cpu()
 
         # Update tensorboard ...
-        self.writer.add_scalar('train_loss_total', loss["total"], global_step=self.step)
-        self.writer.add_scalar('train_loss_scale', loss["scale"], global_step=self.step)
-        self.writer.add_scalar('train_loss_orientation', loss["orientation"], global_step=self.step)
+        self.writer.add_scalar(
+            'train_loss_total',
+            loss["total"],
+            global_step=self.step)
+        self.writer.add_scalar(
+            'train_loss_scale',
+            loss["scale"],
+            global_step=self.step)
+        self.writer.add_scalar(
+            'train_loss_orientation',
+            loss["orientation"],
+            global_step=self.step)
 
         # update tqdm logger bar.
-        loss_msg = {k:float(v.detach().cpu()) for (k,v) in loss.items()}
+        loss_msg = {k: float(v.detach().cpu()) for (k, v) in loss.items()}
         self.tqdm.set_postfix(loss=loss_msg)
         self.tqdm.update()
 
@@ -100,29 +111,44 @@ class TrainLogger:
             dimensions = outputs[Schema.SCALE].detach().cpu()
             quaternion = outputs[Schema.QUATERNION].detach().cpu()
 
-        self.writer.add_image('train_images', input_image[0].cpu(), global_step=self.step)
+        self.writer.add_image(
+            'train_images',
+            input_image[0].cpu(),
+            global_step=self.step)
 
-        image_with_box = plot_regressed_3d_bbox(input_image, keypoints_2d, proj_matrix, dimensions, quaternion, translations)
-        
-        self.writer.add_image('train_result_images', image_with_box[0:3], global_step=self.step)
+        image_with_box = plot_regressed_3d_bbox(
+            input_image,
+            keypoints_2d,
+            proj_matrix,
+            dimensions,
+            quaternion,
+            translations)
+
+        self.writer.add_image(
+            'train_result_images', image_with_box[0: 3],
+            global_step=self.step)
 
         print(inputs[Schema.INSTANCE_NUM])
         print(inputs[Schema.INDEX])
         print(inputs[Schema.INDEX].shape)
 
     def _on_step(self, step):
-        """save current step"""
+        """save current step."""
         self.step = step
-    
+
     def _subscribe(self):
         self.hub.subscribe(Topic.STEP, self._on_step)
         # NOTE(ycho): Log loss only periodically.
-        self.hub.subscribe(Topic.TRAIN_LOSS, Periodic(self.period, self._on_loss))
-        self.hub.subscribe(Topic.TRAIN_OUT, Periodic(self.period, self._on_train_out))
-    
+        self.hub.subscribe(
+            Topic.TRAIN_LOSS, Periodic(
+                self.period, self._on_loss))
+        self.hub.subscribe(
+            Topic.TRAIN_OUT, Periodic(
+                self.period, self._on_train_out))
+
     def __del__(self):
         self.tqdm.close()
-               
+
 
 def main():
     logging.basicConfig(level=logging.WARN)
@@ -136,16 +162,17 @@ def main():
     writer = SummaryWriter(path.log)
 
     transform = Compose([CropObject(CropObject.Settings()),
+                         Normalize(Normalize.Settings(
+                             keys=(Schema.CROPPED_IMAGE,))),
                          PhotometricAugment(PhotometricAugment.Settings(
-                             key_in = Schema.CROPPED_IMAGE,
-                             key_out = Schema.CROPPED_IMAGE), in_place=False),
-                         Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,))),
+                             key_in=Schema.CROPPED_IMAGE,
+                             key_out=Schema.CROPPED_IMAGE), in_place=False)
                          ])
     train_loader, test_loader = get_loaders(opts.dataset,
                                             device=th.device('cpu'),
                                             batch_size=opts.batch_size,
                                             transform=transform,
-                                            collate_fn = collate_cropped_img)
+                                            collate_fn=collate_cropped_img)
 
     # NOTE(ycho): Synchronous event hub.
     hub = Hub()
@@ -198,7 +225,8 @@ def main():
     # All metrics evaluation should reset stats at eval_begin(),
     # aggregate stats at eval_step(),
     # and output stats at eval_end(). These signals are all implemented.
-    # What are the appropriate metrics to implement for bounding box regression?
+    # What are the appropriate metrics to implement for bounding box
+    # regression?
     def _on_eval_step(inputs, outputs):
         pass
     hub.subscribe(Topic.EVAL_STEP, _on_eval_step)
@@ -218,11 +246,11 @@ def main():
         c, h, w = image.shape[-3:]
         image = image.view(-1, c, h, w)
         truth_quat = data[Schema.QUATERNION].to(device)
-        truth_quat = truth_quat.view(-1,4)
+        truth_quat = truth_quat.view(-1, 4)
         truth_dim = data[Schema.SCALE].to(device)
-        truth_dim = truth_dim.view(-1,3)
+        truth_dim = truth_dim.view(-1, 3)
         truth_trans = data[Schema.TRANSLATION].to(device)
-        truth_trans = truth_trans.view(-1,3)
+        truth_trans = truth_trans.view(-1, 3)
 
         dim, quat = model(image)
 
@@ -233,8 +261,8 @@ def main():
         # Also make input/output pair from training
         # iterations available to the event bus.
         hub.publish(Topic.TRAIN_OUT,
-                    inputs = data,
-                    outputs = outputs)
+                    inputs=data,
+                    outputs=outputs)
 
         loss = {}
 
@@ -248,12 +276,15 @@ def main():
 
         return loss
 
-    ## Load from checkpoint
+    # Load from checkpoint
     if opts.load_ckpt:
-        logging.info(F'Loading checkpoint {opts.load_ckpt} ...')
-        Saver(model, optimizer).load(opts.load_ckpt)
+        ckpt_path = Path(opts.load_ckpt).expanduser()
+        if not ckpt_path.exists():
+            raise FileNotFoundError(F'{ckpt_path} not found!')
+        logging.info(F'Loading checkpoint {ckpt_path} ...')
+        Saver(model, optimizer).load(str(ckpt_path))
 
-    ## Trainer
+    # Trainer
     trainer = Trainer(opts.train,
                       model,
                       optimizer,
