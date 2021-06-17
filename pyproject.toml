@@ -39,6 +39,7 @@ scipy = [
  {version = "<1.5", python = ">=3.6,<3.7"},
  {version = ">=1.5", python = ">=3.7"}
 ]
+line-profiler = "^3.3.0"
 
 [build-system]
 requires = ["setuptools", "wheel", "poetry-core>=1.0.0"]

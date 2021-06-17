@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+__all__ = ['SolveTranslation']
+
 import torch as th
 import numpy as np
 import itertools
@@ -28,8 +30,47 @@ def get_cube_points(prepend_centroid: bool = False) -> th.Tensor:
     return points_3d
 
 
-def _is_linprog_feasible(*args, **kwds):
-    """Checks if a system of linear inequalities is feasible.
+def compute_bounds(A: np.ndarray, b: np.ndarray):
+    """Compute bounds along N line segments that form Ax<=b.
+
+    Intended for feasibility-checking for 2D linear inequalities. given
+    A=(N,2) and b=(N), computes the upper and lower bounds of the
+    inequality along each line segment with O(N^2) time complexity.
+    """
+    A0, b0 = A[:, None], b[:, None]  # N,1,2
+    A1, b1 = A[None, :], b[None, :]  # 1,N,2
+
+    x0, y0 = A0[..., 0], A0[..., 1]
+    x1, y1 = A1[..., 0], A1[..., 1]
+    denom = x0 * y1 - y0 * x1
+
+    cx = x0 * b1 - x1 * b0
+    cy = y0 * b1 - y1 * b0
+
+    # Compute distance along tangent.
+    with np.errstate(invalid='ignore'):
+        dt = -(x0 * cx + y0 * cy) / denom
+
+    # Compute bounds.
+    lo = np.max(dt, axis=-1, where=(denom > 0), initial=-np.inf)
+    hi = np.min(dt, axis=-1, where=(denom < 0), initial=np.inf)
+    return (lo, hi)
+
+
+def _is_linprog_feasible(A_ub: np.ndarray, b_ub: np.ndarray, *ars, **kwargs):
+    """Checks if a system of 2D linear inequalities is feasible.
+
+    Emulates the arguments for `_is_linprog_feasible_scipy`.
+    """
+    A_ub = np.asarray(A_ub)
+    b_ub = np.asarray(b_ub)
+
+    lo, hi = compute_bounds(A_ub, b_ub)
+    return (lo <= hi).any()  # , None
+
+
+def _is_linprog_feasible_scipy(*args, **kwds):
+    """Checks if a system of any linear inequalities is feasible.
 
     See scipy.optimize.linprog for arguments.
     """
@@ -41,7 +82,8 @@ def _is_linprog_feasible(*args, **kwds):
         return True
 
 
-def compute_feasible_permutations(points, fovs):
+def compute_feasible_permutations(points, fovs,
+                                  debug_chull: bool = False):
     """Compute valid permutations for 2D bounding box vertex correspondences.
 
     Solves for the set of possible (i_min,i_max,j_min,j_max)
@@ -59,23 +101,36 @@ def compute_feasible_permutations(points, fovs):
     # to match the convention I was using when I was drafting the algorithm.
     # That is, +Z forward, +X rightward, +Y downward (ROS optical frame convention)
     # rather than +Z backward, +Y rightward, +X downward (Objectron convention)
-    axs = [((2, 0), (-1, 1)), ((2, 1), (-1, 1))]
+    views = [((2, 0), (-1, 1), 1), ((2, 1), (-1, 1), 0)]
 
-    for i, (ax, sgn) in enumerate(axs):
+    for i, (axs, sgn, ax) in enumerate(views):
         # Determine the rays defining the frustum boundaries.
-        fov = fovs[ax[1]]
+        fov = fovs[axs[1]]
         kmax = np.asarray([-np.sin(fov / 2), np.cos(fov / 2)])
         kmin = np.asarray([np.sin(fov / 2), np.cos(fov / 2)])
 
         # Project `points` down to current plane.
-        xax = points[..., ax] * sgn
+        xax = points[..., axs] * sgn
 
-        # Guaranteed CCW.
-        hull = ConvexHull(xax)
+        if debug_chull:
+            # NOTE(ycho): Explicit convex-hull check.
+            # Guaranteed CCW.
+            hull = ConvexHull(xax)
+            # Make into CW, since that's how I thought about this
+            indices = hull.vertices[::-1]
+            x = xax[indices]
+        else:
+            # NOTE(ycho): Simpler routine to compute convex hull,
+            # by exploiting cuboid geometry.
+            i0 = np.argmin(points[..., ax])
+            i1 = (7 - i0) % 8  # == np.argmin(points[...,ax])
+            indices = np.arange(8)
+            indices = np.delete(indices, [i0, i1], axis=0)
 
-        # Make into CW, since that's how I thought about this
-        indices = hull.vertices[::-1]
-        x = xax[indices]
+            # NOTE(ycho): Sort vertices of convex hull, CW.
+            angles = np.arctan2(xax[indices, 0], xax[indices, 1])
+            indices = indices[np.argsort(angles)]
+            x = xax[indices]
 
         # Inequalities by camera fov.
         # has to be higher than dmax
@@ -145,8 +200,10 @@ class SolveTranslation:
     and chooses the best one that minimizes the error.
     """
 
-    def __init__(self, recompute_error: bool = True):
+    def __init__(self, recompute_error: bool = True,
+                 debug_chull: bool = False):
         self.recompute_error = recompute_error
+        self.debug_chull = debug_chull
         self.points = get_cube_points()
         self.box_points = BoxPoints2D(th.device('cpu'),
                                       key_out=Schema.KEYPOINT_2D)
@@ -185,7 +242,7 @@ class SolveTranslation:
                     action='ignore',
                     category=RuntimeWarning)
                 perms = compute_feasible_permutations(
-                    vertices @ R.T, fovs)
+                    vertices @ R.T, fovs, self.debug_chull)
             perms = np.asarray(list(perms), dtype=np.int32)
             constraints = vertices[perms, :]
         else:

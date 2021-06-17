@@ -25,6 +25,7 @@ import logging
 import torch as th
 from torchvision.transforms import Compose
 from torch.utils.data._utils.collate import default_collate
+import torch.autograd.profiler as profiler
 from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
 
 from top.data.transforms import (
@@ -76,6 +77,7 @@ class AppSettings(Serializable):
     max_num: int = -1
     report_file: str = '/tmp/report.txt'
     device: str = ''
+    profile: bool = False
 
 
 class FormatLabel:
@@ -740,10 +742,7 @@ def load_model():
     return model
 
 
-def main():
-    logging.captureWarnings(True)
-    opts = AppSettings()
-    opts = update_settings(opts)
+def eval_main(opts: AppSettings):
 
     model = load_model()
     evaluator = Evaluator(opts, model)
@@ -793,8 +792,23 @@ def main():
         evaluator.write_report()
 
 
+def main():
+    logging.captureWarnings(True)
+    opts = AppSettings()
+    opts = update_settings(opts)
+    if opts.profile:
+        try:
+            with profiler.profile(record_shapes=True, use_cuda=True) as prof:
+                eval_main(opts)
+        finally:
+            print('tracing...')
+            print(prof.key_averages().table(
+                sort_by='cpu_time_total',
+                row_limit=16))
+            prof.export_chrome_trace("/tmp/trace.json")
+    else:
+        eval_main(opts)
+
+
 if __name__ == '__main__':
-   # opts.mark_flag_as_required('report_file')
-   # opts.mark_flag_as_required('eval_data')
-   # app.run(main)
-   main()
+    main()
