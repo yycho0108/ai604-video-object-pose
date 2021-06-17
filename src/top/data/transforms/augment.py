@@ -48,7 +48,10 @@ class PhotometricAugment:
         else:
             outputs = inputs.copy()
 
-        augmented_image = self.xfm(outputs[self.opts.key_in])
+        if th.numel(outputs[self.opts.key_in]) <= 0:
+            augmented_image = outputs[self.opts.key_in]
+        else:
+            augmented_image = self.xfm(outputs[self.opts.key_in])
         outputs[self.opts.key_out] = augmented_image
         return inputs
 

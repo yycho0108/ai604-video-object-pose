@@ -19,6 +19,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose
 from top.data.transforms.common import InstancePadding, Normalize
+from top.data.transforms.augment import PhotometricAugment
 
 from top.train.trainer import Trainer
 from top.train.trainer import Saver
@@ -130,11 +131,15 @@ def main():
 
     device = resolve_device(opts.device)
     model = BoundingBoxRegressionModel(opts.model).to(device)
-    optimizer = th.optim.Adam(model.parameters(), lr=1e-5)
+    optimizer = th.optim.Adam(model.parameters(), lr=1e-4, weight_decay=5e-4)
     writer = SummaryWriter(path.log)
 
     transform = Compose([CropObject(CropObject.Settings()),
-                         Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,)))])
+                         Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,))),
+                         PhotometricAugment(PhotometricAugment.Settings(
+                             key_in = Schema.CROPPED_IMAGE,
+                             key_out = Schema.CROPPED_IMAGE), in_place=False)
+                         ])
     train_loader, test_loader = get_loaders(opts.dataset,
                                             device=th.device('cpu'),
                                             batch_size=opts.batch_size,
