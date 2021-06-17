@@ -84,7 +84,8 @@ class TrainLogger:
         self.writer.add_scalar('train_loss_orientation', loss["orientation"], global_step=self.step)
 
         # update tqdm logger bar.
-        self.tqdm.set_postfix(loss=loss)
+        loss_msg = {k:float(v.detach().cpu()) for (k,v) in loss.items()}
+        self.tqdm.set_postfix(loss=loss_msg)
         self.tqdm.update()
 
     def _on_train_out(self, inputs, outputs):
