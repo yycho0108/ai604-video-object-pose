@@ -102,4 +102,4 @@ ssh -tt -i "${MYDIR}/${PROJECT_NAME}.pem" -o StrictHostKeyChecking=no "${AWS_USE
 # Pull docker image on the remote
 # FIXME(ycho): Super hardcoded!!!!!!!!!!!
 ssh -tt -i "${MYDIR}/${PROJECT_NAME}.pem" -o StrictHostKeyChecking=no "${AWS_USER}@${AWS_IP}" -- \
-    763104351884.dkr.ecr.ap-northeast-2.amazonaws.com/pytorch-training:1.6.0-gpu-py36-cu101-ubuntu16.04
+    docker pull 763104351884.dkr.ecr.ap-northeast-2.amazonaws.com/pytorch-training:1.6.0-gpu-py36-cu101-ubuntu16.04
