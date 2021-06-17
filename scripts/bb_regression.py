@@ -135,10 +135,10 @@ def main():
     writer = SummaryWriter(path.log)
 
     transform = Compose([CropObject(CropObject.Settings()),
-                         Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,))),
                          PhotometricAugment(PhotometricAugment.Settings(
                              key_in = Schema.CROPPED_IMAGE,
-                             key_out = Schema.CROPPED_IMAGE), in_place=False)
+                             key_out = Schema.CROPPED_IMAGE), in_place=False),
+                         Normalize(Normalize.Settings(keys=(Schema.CROPPED_IMAGE,))),
                          ])
     train_loader, test_loader = get_loaders(opts.dataset,
                                             device=th.device('cpu'),

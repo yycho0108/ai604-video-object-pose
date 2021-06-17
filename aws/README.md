@@ -13,6 +13,15 @@
 ssh -i ./current/top.pem "ubuntu@$(cat ./current/ip.txt)"
 ```
 
+## Configure AWS Instance to use CUDA 10.1
+
+See [guide](https://docs.aws.amazon.com/dlami/latest/devguide/tutorial-base.html):
+
+```bash
+sudo rm /usr/local/cuda
+sudo ln -s /usr/local/cuda-10.1 /usr/local/cuda
+```
+
 ## Run Docker Container within AWS Instance
 
 ```bash
