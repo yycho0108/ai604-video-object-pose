@@ -57,7 +57,7 @@ class AppSettings(Serializable):
     batch_size: int = 8
     alpha: float = 0.5
     device: str = 'cuda'
-    log_period: int = 32
+    log_period: int = 500
     save_period: int = 5000
     eval_period: int = 1000
 
@@ -155,6 +155,7 @@ class TrainLogger:
 
 
 def main():
+    th.autograd.set_detect_anomaly(True)
     logging.basicConfig(level=logging.WARN)
     opts = AppSettings()
     opts = update_settings(opts)

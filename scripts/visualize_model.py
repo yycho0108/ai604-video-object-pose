@@ -9,7 +9,7 @@ import logging
 import torch as th
 from torchvision.transforms import Compose
 from torch.utils.data._utils.collate import default_collate
-from pytorch3d.transforms import quaternion_to_matrix
+from pytorch3d.transforms import (quaternion_to_matrix, matrix_to_quaternion)
 
 from top.data.transforms import (
     Normalize,
@@ -82,7 +82,8 @@ def main():
         with th.no_grad():
             # run inference
             crop_img = data[Schema.CROPPED_IMAGE].view(-1, 3, 224, 224)
-            dim, quat = model(crop_img.to(device))
+            dim, dcm = model(crop_img.to(device))
+            quat = matrix_to_quaternion(dcm)
             dim2, quat2 = data[Schema.SCALE], data[Schema.QUATERNION]
             logging.debug('D {} {}'.format(dim, dim2))
             logging.debug('Q {} {}'.format(quat, quat2))

@@ -69,17 +69,23 @@ class RotationOrtho6D(nn.Module):
 class GeodesicLoss(nn.Module):
     """"""
 
-    def __init__(self):
+    def __init__(self, cos: bool = True):
         super().__init__()
+        self.cos = cos
 
     def forward(self, x: th.Tensor, y: th.Tensor) -> float:
         """
         Expected format = (...,3,3) where x'=Rx.
         """
-        theta = (th.einsum('...ij,...ij->...', x, y)
-                 .sub_(1.0).mul_(0.5)
-                 .clamp_(-1.0, 1.0)
-                 .acos_())
+        if self.cos:
+            # Map to 0~1 range, -0.5*cos(Y)+0.5
+            theta = (th.einsum('...ij,...ij->...', x, y)
+                     .mul_(-0.25).add_(0.75))
+        else:
+            theta = (th.einsum('...ij,...ij->...', x, y)
+                     .sub_(1.0).mul_(0.5)
+                     .clamp_(-1.0, 1.0)
+                     .acos_())
         error = theta.mean()
         # NOTE(ycho): Beware of numerical instabilities!
         return error
