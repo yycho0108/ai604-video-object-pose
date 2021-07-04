@@ -75,7 +75,7 @@ def download_shards(shards: List[str], out_dir: str,
 
 @dataclass
 class Settings(Serializable):
-    max_train_bytes: int = 32 * (2 ** 30)  # default 32GB
+    max_train_bytes: int = 512 * (2 ** 30)  # default 32GB
     max_test_bytes: int = 4 * (2 ** 30)  # default 4GB
     num_workers: int = 8
     cache_dir: str = '~/.cache/ai604/'
@@ -98,7 +98,6 @@ def main():
     opts = Settings()
     opts = update_settings(opts)
     pool_states = [{} for _ in range(opts.num_workers)]
-    # for train in [False, True]:
     for train in [False, True]:
         name = 'objectron-train' if train else 'objectron-test'
         logging.info(F'Processing {name}')

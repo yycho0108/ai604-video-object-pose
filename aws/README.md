@@ -25,10 +25,12 @@ sudo ln -s /usr/local/cuda-10.1 /usr/local/cuda
 ## Run Docker Container within AWS Instance
 
 ```bash
+# It might be necessary to re-own /data.
+# sudo chown ubuntu /data
 git clone https://github.com/yycho0108/ai604-video-object-pose.git
 cd ai604-video-object-pose
-docker build -t top
-docker run -p 6006:6006 --volume /data:/home/user --shm-size 32G -it top
+docker build -t top .
+nvidia-docker run -p 6006:6006 --volume /data:/home/user --shm-size 32G -it top
 ```
 
 ## Configure Package Within Docker Container
