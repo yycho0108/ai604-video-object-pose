@@ -12,6 +12,9 @@ from simple_parsing.helpers.serialization.serializable import D
 from pytorch3d.transforms.rotation_conversions import quaternion_to_matrix
 from torch._C import dtype
 
+from top.data.transforms.bounding_box import SolveTranslation
+from top.data.schema import Schema
+
 
 class cv_colors(Enum):
     RED = (0,0,255)
@@ -172,10 +175,17 @@ def plot_regressed_3d_bbox(img, points_2d, proj_matrix, dimension, quaternion, t
     pmax = points.max(dim = -2).values.reshape(-1)
     box_2d = th.cat([pmin,pmax])
 
-    location, X = calc_location(box_2d, proj_matrix, dimension, quaternion, translations)
+    solver = SolveTranslation()
+    translation, _ = solver({
+                Schema.PROJECTION: proj_matrix,
+                Schema.BOX_2D: box_2d,
+                Schema.QUATERNION: quaternion,
+                Schema.SCALE: dimension
+            })
+    # translation, X = calc_location(box_2d, proj_matrix, dimension, quaternion, translations)
     rotation = quaternion_to_matrix(th.as_tensor(quaternion)).cpu().numpy()
 
-    img = plot_3d_box(img, proj_matrix, rotation, dimension, location)
+    img = plot_3d_box(img, proj_matrix, rotation, dimension, translation)
     img = th.as_tensor(img)
 
     return img

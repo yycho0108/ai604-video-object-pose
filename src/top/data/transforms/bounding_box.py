@@ -218,7 +218,7 @@ class SolveTranslation:
         dimension = inputs[Schema.SCALE]
         if Schema.ORIENTATION in inputs:
             R = inputs[Schema.ORIENTATION].detach().cpu().numpy()
-        elif Schema.QUATERNION in inputss:
+        elif Schema.QUATERNION in inputs:
             quaternion = inputs[Schema.QUATERNION]
             R = (quaternion_to_matrix(th.as_tensor(quaternion))
                  .detach().cpu().numpy())

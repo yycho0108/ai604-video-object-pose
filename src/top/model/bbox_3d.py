@@ -10,14 +10,13 @@ import torch.nn.functional as F
 from top.model.backbone import resnet_fpn_backbone
 from top.model.loss_util import *
 from top.data.schema import Schema
+from top.model.rotation import RotationOrtho6D
 
 
 # TODO(Jiyong): compare various method to regress orientation,
 # such as quaternions, rotation vector, euler anger, multibin, etc
 class BoundingBoxRegressionModel(nn.Module):
-    """
-    regress parameters for projection from 2D to 3D bounding box 
-    """
+    """regress parameters for projection from 2D to 3D bounding box."""
 
     @dataclass
     class Settings(Serializable):
@@ -28,14 +27,14 @@ class BoundingBoxRegressionModel(nn.Module):
         w: float = 0.4
 
     def __init__(self, opts: Settings):
-        
+
         super(BoundingBoxRegressionModel, self).__init__()
         self.opts = opts
 
-        self.features = resnet_fpn_backbone(opts.backbone_name,
-                                            pretrained=True,
-                                            trainable_layers=opts.num_trainable_layers,
-                                            returned_layers=opts.returned_layers)
+        self.features = resnet_fpn_backbone(
+            opts.backbone_name, pretrained=True,
+            trainable_layers=opts.num_trainable_layers,
+            returned_layers=opts.returned_layers)
 
         # # NOTE(Jiyong): This module is used for Multibin regression
         # # FIXME(Jiyong): hardcode for input size
@@ -52,35 +51,37 @@ class BoundingBoxRegressionModel(nn.Module):
 
         # NOTE(Jiyong): This module is used for regressing quaternions
         # FIXME(Jiyong): hardcode for input size
-        self.quaternions = nn.Sequential(
-                    nn.Flatten(),
-                    nn.Linear(256 * 7 * 7, 256),
-                    nn.ReLU(True),
-                    # nn.Dropout(),
-                    nn.Linear(256, 256),
-                    nn.ReLU(True),
-                    # nn.Dropout(),
-                    nn.Linear(256, 4)
-                )
+        self.orientation = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(256 * 7 * 7, 256),
+            nn.ReLU(True),
+            # nn.Dropout(),
+            nn.Linear(256, 256),
+            nn.ReLU(True),
+            # nn.Dropout(),
+            nn.Linear(256, 6),
+            # --> Column Vector Rotation Matrix
+            RotationOrtho6D(RotationOrtho6D.Settings())
+        )
 
         # FIXME(Jiyong): hardcode for input size
         self.dimension = nn.Sequential(
-                    nn.Flatten(),
-                    nn.Linear(256 * 7 * 7, 256),
-                    nn.ReLU(True),
-                    # nn.Dropout(),
-                    nn.Linear(256, 256),
-                    nn.ReLU(True),
-                    # nn.Dropout(),
-                    nn.Linear(256, 3)
-                )
+            nn.Flatten(),
+            nn.Linear(256 * 7 * 7, 256),
+            nn.ReLU(True),
+            # nn.Dropout(),
+            nn.Linear(256, 256),
+            nn.ReLU(True),
+            # nn.Dropout(),
+            nn.Linear(256, 3)
+        )
 
     def forward(self, x):
         # FIXME(Jiyong): hardcoded feature layer
         x = self.features(x)['0']
         # confidence = self.confidence(x)
         dimension = self.dimension(x)
-        quaternions = self.quaternions(x)
+        orientation = self.orientation(x)
         # TODO(ycho): Check if necessary
         # dimension = th.squeeze(dimension)
         # quaternions = th.squeeze(quaternions)
@@ -91,4 +92,4 @@ class BoundingBoxRegressionModel(nn.Module):
         # tri_orientation = tri_orientation.view(-1, self.bins, 2)
         # tri_orientation = F.normalize(tri_orientation, dim=2)
 
-        return dimension, quaternions
+        return dimension, orientation

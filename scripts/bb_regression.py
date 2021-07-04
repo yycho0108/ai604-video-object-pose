@@ -19,6 +19,9 @@ import torch as th
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose
+from pytorch3d.transforms import (
+    quaternion_to_matrix, matrix_to_quaternion)
+
 from top.data.transforms.common import InstancePadding, Normalize
 from top.data.transforms.augment import PhotometricAugment
 
@@ -34,6 +37,7 @@ from top.run.torch_util import resolve_device
 from top.run.draw_regressed_bbox import plot_regressed_3d_bbox
 
 from top.model.bbox_3d import BoundingBoxRegressionModel
+from top.model.rotation import GeodesicLoss
 
 from top.data.load import (DatasetSettings, collate_cropped_img, get_loaders)
 from top.data.schema import Schema
@@ -54,7 +58,7 @@ class AppSettings(Serializable):
     alpha: float = 0.5
     device: str = 'cuda'
     log_period: int = 32
-    save_period: int = 1000
+    save_period: int = 5000
     eval_period: int = 1000
 
     profile: bool = False
@@ -128,9 +132,9 @@ class TrainLogger:
             'train_result_images', image_with_box[0: 3],
             global_step=self.step)
 
-        print(inputs[Schema.INSTANCE_NUM])
-        print(inputs[Schema.INDEX])
-        print(inputs[Schema.INDEX].shape)
+        #print(inputs[Schema.INSTANCE_NUM])
+        #print(inputs[Schema.INDEX])
+        #print(inputs[Schema.INDEX].shape)
 
     def _on_step(self, step):
         """save current step."""
@@ -237,26 +241,30 @@ def main():
         pass
     hub.subscribe(Topic.METRICS, _log_all)
 
-    orientation_loss_func = nn.L1Loss().to(device)
+    # orientation_loss_func = nn.L1Loss().to(device)
+    orientation_loss_func = GeodesicLoss().to(device)
     scale_loss_func = nn.L1Loss().to(device)
 
     def _loss_fn(model: th.nn.Module, data):
         # Now that we're here, convert all inputs to the device.
-        image = data[Schema.CROPPED_IMAGE].to(device)
-        c, h, w = image.shape[-3:]
-        image = image.view(-1, c, h, w)
-        truth_quat = data[Schema.QUATERNION].to(device)
-        truth_quat = truth_quat.view(-1, 4)
-        truth_dim = data[Schema.SCALE].to(device)
-        truth_dim = truth_dim.view(-1, 3)
-        truth_trans = data[Schema.TRANSLATION].to(device)
-        truth_trans = truth_trans.view(-1, 3)
+        with th.no_grad():
+            image = data[Schema.CROPPED_IMAGE].to(device)
+            c, h, w = image.shape[-3:]
+            image = image.view(-1, c, h, w)
+            truth_quat = data[Schema.QUATERNION].to(device)
+            truth_quat = truth_quat.view(-1, 4)
+            truth_dcm = quaternion_to_matrix(truth_quat)
+            truth_dim = data[Schema.SCALE].to(device)
+            truth_dim = truth_dim.view(-1, 3)
+            truth_trans = data[Schema.TRANSLATION].to(device)
+            truth_trans = truth_trans.view(-1, 3)
 
-        dim, quat = model(image)
+        dim, orientation = model(image)
 
         outputs = {}
         outputs[Schema.SCALE] = dim
-        outputs[Schema.QUATERNION] = quat
+        outputs[Schema.ORIENTATION] = orientation
+        outputs[Schema.QUATERNION] = matrix_to_quaternion(orientation)
 
         # Also make input/output pair from training
         # iterations available to the event bus.
@@ -267,7 +275,8 @@ def main():
         loss = {}
 
         scale_loss = scale_loss_func(dim, truth_dim)
-        orient_loss = orientation_loss_func(quat, truth_quat)
+        # orient_loss = orientation_loss_func(quat, truth_quat)
+        orient_loss = orientation_loss_func(orientation, truth_dcm)
         total_loss = opts.alpha * scale_loss + orient_loss
 
         loss["total"] = total_loss
