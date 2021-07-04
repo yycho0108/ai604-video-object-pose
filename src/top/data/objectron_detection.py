@@ -13,6 +13,7 @@ from PIL import Image
 import numpy as np
 import pickle
 import tempfile
+import warnings
 
 # torch+torchvision
 import torch as th
@@ -50,9 +51,12 @@ def decode(example, feature_names: List[str] = []):
 
     # NOTE(ycho): Loading directly with torch to avoid warnings with PIL.
     image_bytes = example['image/encoded']
-    # NOTE(ycho): Workaround to suppress negligible torch warnings
-    # image_bytes.setflags(write=True)
-    image = thio.decode_image(th.from_numpy(image_bytes))
+    # NOTE(ycho): Workaround to suppress negligible torch warnings.
+    # Since numpy does not own `image_bytes`, we can't just set
+    # `writable=True`.
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=UserWarning)
+        image = thio.decode_image(th.from_numpy(image_bytes))
 
     translation = example['object/translation'].reshape(num_instances, 3)
     orientation = example['object/orientation'].reshape(num_instances, 9)
